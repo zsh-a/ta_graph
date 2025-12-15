@@ -6,7 +6,7 @@ import os
 import datetime
 from typing import List, Dict, Any, Optional
 from langfuse import observe
-from ..state import AgentState, MarketData
+from ..state import AgentState
 from ..logger import get_logger
 from ..utils.timeframe_config import get_data_limit
 from ..utils.brooks_chart import save_brooks_chart  # Use Brooks chart renderer
@@ -21,6 +21,13 @@ def calculate_ema(prices: List[float], period: int = 20) -> List[float]:
 
 def generate_bar_data_table(df: pd.DataFrame, count: int = 30) -> str:
     """Generate text table for LLM"""
+    # Defensive checks
+    if df is None or len(df) == 0:
+        return "## No market data available"
+    
+    if count is None:
+        count = 30
+    
     recent = df.tail(count).copy()
     lines = []
     lines.append("## Bar Data (Most Recent 30 Bars)")
@@ -67,8 +74,23 @@ def fetch_market_data(state: AgentState) -> dict:
     symbol = state.get("symbol", "BTC/USDT")
     interval = state.get("primary_timeframe", "15m")
     
-    # Parse interval to timeframe for CCXT (usually they match, e.g. '15m')
-    timeframe = interval
+    # Convert timeframe to CCXT-compatible format
+    # E.g., '60m' -> '1h', '240m' -> '4h', '1440m' -> '1d'
+    if interval.endswith('m'):
+        minutes = int(interval[:-1])
+        if minutes >= 1440:  # >= 1 day
+            days = minutes // 1440
+            timeframe = f"{days}d"
+        elif minutes >= 60:  # >= 1 hour
+            hours = minutes // 60
+            timeframe = f"{hours}h"
+        else:
+            timeframe = interval  # Keep as is for minutes
+    else:
+        timeframe = interval  # Already in correct format
+    
+    logger.info(f"Using timeframe: {timeframe} (from {interval})")
+    
     # 使用配置管理器获取数据量
     limit = get_data_limit()
     
@@ -106,23 +128,34 @@ def fetch_market_data(state: AgentState) -> dict:
     current_price = df['close'].iloc[-1]
     ema20_val = df['ema20'].iloc[-1]
     
-    # 5. Populate State
-    # Create MarketData object (Pydantic)
-    market_data = MarketData(
-        symbol=symbol,
-        timeframe=timeframe,
-        ohlcv=ohlcv, # Keep raw if needed
-        current_price=current_price,
-        ema20=ema20_val,
-        bar_data_table=bar_data_table,
-        chart_image_path=chart_path
-    )
+    # 5. Return state updates (plain dict format)
+    market_data_dict = {
+        "symbol": symbol,
+        "timeframe": timeframe,
+        "ohlcv": ohlcv,
+        "current_price": float(current_price),
+        "ema20": float(ema20_val) if not pd.isna(ema20_val) else None,
+        "bar_data_table": bar_data_table,
+        "chart_image_path": chart_path
+    }
     
-    market_state_dict = market_data.model_dump()
+    # Convert OHLCV to simple bar format for state
+    bars = [
+        {
+            "timestamp": int(row[0]),
+            "open": float(row[1]),
+            "high": float(row[2]),
+            "low": float(row[3]),
+            "close": float(row[4]),
+            "volume": float(row[5])
+        }
+        for row in ohlcv
+    ]
     
     return {
-        "market_data": market_data, # For backward compatibility
-        "market_states": [market_state_dict], # For new Strategy node
-        "current_price": current_price,
+        "market_data": market_data_dict,
+        "bars": bars,
+        "current_bar": bars[-1] if bars else None,
+        "current_price": float(current_price),
         "chart_image_path": chart_path
     }

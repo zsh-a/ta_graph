@@ -1,0 +1,3 @@
+"""
+Trading tests package initialization
+"""

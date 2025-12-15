@@ -1,7 +1,7 @@
 from typing import List, Dict, Any, Optional
 import os
 from langfuse import observe
-from ..state import AgentState, MarketData
+from ..state import AgentState
 from ..logger import get_logger
 from ..utils.price_calculator import calculate_entry_price, calculate_stop_loss_price, calculate_take_profit_price
 
@@ -37,13 +37,12 @@ def assess_risk(state: AgentState) -> dict:
     
     # Get real account info from database if available
     try:
-        from ..database.trading_history import get_account_performance, get_default_model
+        from ..database.trading_history import get_account_performance
         from ..database import get_session
         
         db = get_session()
         try:
-            model_type = get_default_model(db)
-            performance = get_account_performance(model=model_type, db=db)
+            performance = get_account_performance(db=db)
             available_cash = performance.availableCash
             total_equity = performance.totalCashValue
             logger.info(f"💰 Account: ${available_cash:.2f} available / ${total_equity:.2f} total")

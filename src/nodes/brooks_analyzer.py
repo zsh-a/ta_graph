@@ -305,16 +305,10 @@ def brooks_analyzer(state: AgentState) -> dict:
     # Try to get from market_data if not in state directly
     market_data = state.get("market_data")
     if not chart_path and market_data:
-        if hasattr(market_data, 'chart_image_path'):
-            chart_path = market_data.chart_image_path
-            logger.info(f"Chart path from market_data object: {chart_path}")
-    
-    # Try to get from market_states
-    if not chart_path:
-        market_states = state.get("market_states", [])
-        if market_states and len(market_states) > 0:
-            chart_path = market_states[0].get("chart_image_path")
-            logger.info(f"Chart path from market_states: {chart_path}")
+        # market_data is a dict, not an object
+        if isinstance(market_data, dict):
+            chart_path = market_data.get('chart_image_path')
+            logger.info(f"Chart path from market_data dict: {chart_path}")
     
     htf_chart_path = state.get("htf_chart_path")
     
@@ -322,9 +316,13 @@ def brooks_analyzer(state: AgentState) -> dict:
         logger.error("No market data available")
         return {"brooks_analysis": None}
     
-    # Get bar data table
-    bar_data_table = market_data.bar_data_table if hasattr(market_data, 'bar_data_table') else ""
-    ohlcv = market_data.ohlcv if hasattr(market_data, 'ohlcv') else []
+    # Get bar data table - handle both dict and object cases
+    if isinstance(market_data, dict):
+        bar_data_table = market_data.get('bar_data_table', '')
+        ohlcv = market_data.get('ohlcv', [])
+    else:
+        bar_data_table = market_data.bar_data_table if hasattr(market_data, 'bar_data_table') else ""
+        ohlcv = market_data.ohlcv if hasattr(market_data, 'ohlcv') else []
     
     if not chart_path or not os.path.exists(chart_path):
         logger.error(f"Chart not found: {chart_path}")

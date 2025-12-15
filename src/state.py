@@ -1,47 +1,90 @@
-from typing import TypedDict, List, Optional, Dict, Any, Union
-from pydantic import BaseModel, Field
+"""
+统一的交易状态定义
 
-# --- Pydantic Models for State Data ---
-# (These mirror the structure but are used within the TypedDict)
+用于LangGraph Supervisor架构
+"""
 
-class MarketData(BaseModel):
-    symbol: str = Field(description="Trading symbol, e.g., BTC/USDT")
-    timeframe: str = Field(description="Timeframe, e.g., 1h")
-    ohlcv: List[List[float]] = Field(description="Raw OHLCV data")
-    current_price: float = Field(description="Current close price")
-    ema20: Optional[float] = Field(default=None, description="Current EMA20 value")
-    bar_data_table: str = Field(description="Formatted text table of recent bars for LLM")
-    chart_image_path: Optional[str] = Field(default=None, description="Path to the chart image")
+from typing import TypedDict, Optional, List, Any
+from datetime import datetime
 
-class Analysis(BaseModel):
-    summary: str = Field(description="Summary of market condition")
-    trend: str = Field(description="Market trend: BULLISH, BEARISH, or SIDEWAYS")
-    key_levels: Dict[str, float] = Field(default_factory=dict, description="Key support and resistance levels")
-    signal: str = Field(description="Trading signal: BUY, SELL, or HOLD")
-    confidence: str = Field(default="medium", description="Confidence level")
-    market_structure: str = Field(default="unknown", description="Market structure")
 
-# --- Main Graph State ---
+class TradingState(TypedDict, total=False):
+    """
+    完整的交易系统状态
+    
+    使用TypedDict确保类型安全，total=False允许部分字段可选
+    """
+    
+    # ========== 核心状态 ==========
+    status: str  # 'hunting', 'order_pending', 'managing', 'cooldown', 'halted'
+    loop_count: int
+    last_update: str  # ISO格式时间戳
+    
+    # ========== 配置信息 ==========
+    symbol: str
+    exchange: str
+    timeframe: int  # 分钟
+    
+    # ========== 市场数据 ==========
+    bars: List[dict]
+    current_bar: Optional[dict]
+    current_bar_index: int
+    current_price: float
+    
+    # ========== 分析结果 ==========
+    market_analysis: Optional[dict]
+    brooks_analysis: Optional[dict]
+    decisions: Optional[List[dict]]
+    
+    # ========== 持仓信息 ==========
+    position: Optional[dict]  # {"side": "long/short", "entry_price": float, "size": float, ...}
+    entry_bar_index: Optional[int]
+    stop_loss: Optional[float]
+    take_profit: Optional[float]
+    breakeven_locked: bool
+    
+    # ========== 订单信息 ==========
+    pending_order_id: Optional[str]
+    order_placed_time: Optional[str]
+    
+    # ========== 风险管理 ==========
+    account_balance: float
+    daily_pnl: float
+    consecutive_losses: int
+    max_daily_loss_pct: float
+    is_trading_enabled: bool
+    
+    # ========== Follow-through分析 ==========
+    followthrough_checked: bool
+    last_followthrough_analysis: Optional[dict]
+    
+    # ========== 内部决策信号 ==========
+    next_action: Optional[str]  # 'scan', 'manage', 'sleep', 'halt'
+    exit_reason: Optional[str]
+    should_exit: bool
+    
+    # ========== 执行结果 ==========
+    execution_results: Optional[List[dict]]
+    last_trade_pnl: Optional[float]
+    
+    # ========== 元数据 ==========
+    messages: List[str]  # 日志消息
+    errors: List[str]  # 错误记录
 
-class AgentState(TypedDict):
-    # Core Data
+
+class AgentState(TypedDict, total=False):
+    """
+    兼容旧的AgentState定义（用于analysis graph）
+    """
     symbol: str
     primary_timeframe: str
-    
-    # Market Data
-    market_data: Optional[MarketData]  # Using Pydantic model for structured access
-    market_states: List[Dict[str, Any]] # List of all market states (for multi-symbol support)
-    
-    # Account & History
-    account_info: Optional[Dict[str, Any]] # Balance, PnL, Open Orders, etc.
-    recent_trades_summary: Optional[str] # Text summary of recent trades
-    
-    # Analysis & Decision
-    market_analysis: Optional[Dict[str, Any]] # Output from Analysis Node
-    decisions: Optional[List[Dict[str, Any]]] # Output from Strategy Node (List of Decision objects)
-    
-    # Execution
-    execution_results: Optional[List[Dict[str, Any]]] # Result of trade execution
-    
-    # Messages (for chat/debug history)
-    messages: List[Dict[str, Any]]
+    messages: List[Any]
+    positions: dict
+    account_info: dict
+    market_data: Optional[dict]
+    market_analysis: Optional[dict]
+    brooks_analysis: Optional[dict]
+    decisions: Optional[List[dict]]
+    execution_results: Optional[List[dict]]
+    bars: List[dict]
+    current_bar: Optional[dict]

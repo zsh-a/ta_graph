@@ -3,19 +3,21 @@ import sys
 
 # Configure Loguru
 # Remove default handler to avoid duplicate logs if reloaded
-logger.remove()
+# logger.remove()
 
-# Add a formatted handler
-# <green>{time}</green> : Time
-# <level>{level}</level> : Lvl
-# <cyan>{extra[name]}</cyan> : Bound name (module)
-# <cyan>{function}</cyan>:<cyan>{line}</cyan> : Func/Line
-# <level>{message}</level> : Msg
-logger.add(
-    sys.stderr,
-    format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{extra[name]}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
-    level="INFO"
-)
+# # Add a formatted handler
+# # <green>{time}</green> : Time
+# # <level>{level}</level> : Lvl
+# # <cyan>{extra[name]}</cyan> : Bound name (module)
+# # <cyan>{function}</cyan>:<cyan>{line}</cyan> : Func/Line
+# # <level>{message}</level> : Msg
+# logger.add(
+#     sys.stderr,
+#     format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{extra[name]}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
+#     level="INFO",
+#     backtrace=True,  # Enable full traceback
+#     diagnose=True    # Show variable values in traceback
+# )
 
 def get_logger(name: str):
     """

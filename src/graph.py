@@ -88,30 +88,6 @@ def create_graph(enable_checkpointing: bool = True, enable_hitl: bool = False):
     logger.info("Graph created successfully")
     return app
 
-def create_simple_graph():
-    """
-    Create a simpler graph without Brooks analyzer for backward compatibility.
-    
-    Returns:
-        Compiled graph
-    """
-    workflow = StateGraph(AgentState)
-    
-    workflow.add_node("market_data", fetch_market_data)
-    workflow.add_node("analysis", analyze_market)
-    workflow.add_node("strategy", generate_strategy)
-    workflow.add_node("risk", assess_risk)
-    workflow.add_node("execution", execute_trade)
-    
-    workflow.set_entry_point("market_data")
-    workflow.add_edge("market_data", "analysis")
-    workflow.add_edge("analysis", "strategy")
-    workflow.add_edge("strategy", "risk")
-    workflow.add_edge("risk", "execution")
-    workflow.add_edge("execution", END)
-    
-    return workflow.compile()
-
 def resume_graph_after_approval(app, config: dict):
     """
     Resume graph execution after human approval in HITL mode.

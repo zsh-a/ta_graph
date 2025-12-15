@@ -13,9 +13,12 @@ from ..state import AgentState
 from ..logger import get_logger
 from ..database import get_session, ModelType, OperationType, SymbolType
 from ..database.trading_history import create_trading_record
-from ..database.account_manager import update_model_trade_stats
 
 logger = get_logger(__name__)
+
+# Import unified exchange client
+from ..trading.exchange_client import get_client, ExchangeClient
+
 
 class TradeResult:
     """Trade execution result"""
@@ -29,42 +32,9 @@ class TradeResult:
         self.executed_amount = executed_amount
         self.error = error
 
-def get_exchange_client(exchange_name: str = "bitget") -> ccxt.Exchange:
-    """
-    Initialize exchange client with API credentials
-    Supports: bitget, binance
-    """
-    api_key = os.getenv("EXCHANGE_API_KEY")
-    secret = os.getenv("EXCHANGE_SECRET")
-    passphrase = os.getenv("EXCHANGE_PASSPHRASE")  # For bitget
-    
-    if not api_key or not secret:
-        raise ValueError("Exchange API credentials not configured")
-    
-    sandbox = os.getenv("TRADING_MODE", "dry-run").lower() != "live"
-    
-    if exchange_name == "bitget":
-        exchange = ccxt.bitget({
-            'apiKey': api_key,
-            'secret': secret,
-            'password': passphrase,
-            'options': {'defaultType': 'swap'},  # Futures
-            'sandbox': sandbox
-        })
-    elif exchange_name == "binance":
-        exchange = ccxt.binance({
-            'apiKey': api_key,
-            'secret': secret,
-            'options': {'defaultType': 'future'},
-            'sandbox': sandbox
-        })
-    else:
-        raise ValueError(f"Unsupported exchange: {exchange_name}")
-    
-    return exchange
 
 def execute_buy_order(
-    exchange: ccxt.Exchange,
+    client: ExchangeClient,
     symbol: str,
     amount: float,
     entry_price: Optional[float] = None,
@@ -73,10 +43,10 @@ def execute_buy_order(
     leverage: int = 20
 ) -> TradeResult:
     """
-    Execute a buy (LONG) order
+    Execute a buy (LONG) order using unified client
     
     Args:
-        exchange: CCXT exchange instance
+        client: ExchangeClient instance
         symbol: Trading pair (e.g., BTC/USDT:USDT)
         amount: Amount in base currency
         entry_price: Entry price (None for market order)
@@ -88,71 +58,37 @@ def execute_buy_order(
         TradeResult with execution details
     """
     try:
-        # Set leverage
-        try:
-            exchange.set_leverage(leverage, symbol)
-        except Exception as e:
-            logger.warning(f"Could not set leverage: {e}")
-        
-        # Place main order
+        # Place order using unified client
         order_type = "limit" if entry_price else "market"
-        order = exchange.create_order(
+        
+        order = client.place_order(
             symbol=symbol,
-            type=order_type,
             side="buy",
+            order_type=order_type,
             amount=amount,
             price=entry_price,
-            params={'stopLoss': {'triggerPrice': stop_loss}} if stop_loss else {}
+            leverage=leverage,
+            stop_loss_price=stop_loss,
+            take_profit_price=take_profit
         )
         
-        logger.info(f"✅ Buy order placed: {order['id']}")
-        logger.info(f"   Price: {order.get('price', 'market')}, Amount: {order.get('filled', 0)}")
-        
-        # Set SL/TP if provided (some exchanges require separate orders)
-        if stop_loss:
-            try:
-                # For Bitget, use stopLossPrice in params
-                sl_order = exchange.create_order(
-                    symbol=symbol,
-                    type='stop_market',
-                    side='sell',
-                    amount=amount,
-                    params={
-                        'stopPrice': stop_loss,
-                        'reduceOnly': True
-                    }
-                )
-                logger.info(f"✅ Stop loss set at {stop_loss}")
-            except Exception as e:
-                logger.error(f"Failed to set stop loss: {e}")
-        
-        if take_profit:
-            try:
-                tp_order = exchange.create_order(
-                    symbol=symbol,
-                    type='limit',
-                    side='sell',
-                    amount=amount,
-                    price=take_profit,
-                    params={'reduceOnly': True}
-                )
-                logger.info(f"✅ Take profit set at {take_profit}")
-            except Exception as e:
-                logger.error(f"Failed to set take profit: {e}")
+        logger.info(f"✅ Buy order executed: {order.id}")
+        logger.info(f"   Price: {order.price}, Filled: {order.filled}")
         
         return TradeResult(
             success=True,
-            order_id=order['id'],
-            executed_price=order.get('price') or order.get('average'),
-            executed_amount=order.get('filled', amount)
+            order_id=order.id,
+            executed_price=order.price,
+            executed_amount=order.filled
         )
         
     except Exception as e:
         logger.error(f"Buy order failed: {e}")
         return TradeResult(success=False, error=str(e))
 
+
 def execute_sell_order(
-    exchange: ccxt.Exchange,
+    client: ExchangeClient,
     symbol: str,
     amount: float,
     entry_price: Optional[float] = None,
@@ -161,69 +97,35 @@ def execute_sell_order(
     leverage: int = 20
 ) -> TradeResult:
     """
-    Execute a sell (SHORT) order
+    Execute a sell (SHORT) order using unified client
     """
     try:
-        # Set leverage
-        try:
-            exchange.set_leverage(leverage, symbol)
-        except Exception as e:
-            logger.warning(f"Could not set leverage: {e}")
-        
-        # Place main order
         order_type = "limit" if entry_price else "market"
-        order = exchange.create_order(
+        
+        order = client.place_order(
             symbol=symbol,
-            type=order_type,
             side="sell",
+            order_type=order_type,
             amount=amount,
             price=entry_price,
-            params={'stopLoss': {'triggerPrice': stop_loss}} if stop_loss else {}
+            leverage=leverage,
+            stop_loss_price=stop_loss,
+            take_profit_price=take_profit
         )
         
-        logger.info(f"✅ Sell order placed: {order['id']}")
-        
-        # Set SL/TP if provided
-        if stop_loss:
-            try:
-                sl_order = exchange.create_order(
-                    symbol=symbol,
-                    type='stop_market',
-                    side='buy',
-                    amount=amount,
-                    params={
-                        'stopPrice': stop_loss,
-                        'reduceOnly': True
-                    }
-                )
-                logger.info(f"✅ Stop loss set at {stop_loss}")
-            except Exception as e:
-                logger.error(f"Failed to set stop loss: {e}")
-        
-        if take_profit:
-            try:
-                tp_order = exchange.create_order(
-                    symbol=symbol,
-                    type='limit',
-                    side='buy',
-                    amount=amount,
-                    price=take_profit,
-                    params={'reduceOnly': True}
-                )
-                logger.info(f"✅ Take profit set at {take_profit}")
-            except Exception as e:
-                logger.error(f"Failed to set take profit: {e}")
+        logger.info(f"✅ Sell order executed: {order.id}")
         
         return TradeResult(
             success=True,
-            order_id=order['id'],
-            executed_price=order.get('price') or order.get('average'),
-            executed_amount=order.get('filled', amount)
+            order_id=order.id,
+            executed_price=order.price,
+            executed_amount=order.filled
         )
         
     except Exception as e:
         logger.error(f"Sell order failed: {e}")
         return TradeResult(success=False, error=str(e))
+
 
 def save_trade_to_database(
     plan: Dict[str, Any],
@@ -250,12 +152,6 @@ def save_trade_to_database(
                 pricing=int(result.executed_price or plan.get('entry_price', 0)),
                 risk_amount=plan.get('risk_amount'),
                 prediction=plan.get('prediction'),
-                db=db
-            )
-            
-            # Update trade stats
-            update_model_trade_stats(
-                model=model_type,
                 db=db
             )
             
@@ -288,13 +184,13 @@ def execute_trade(state: AgentState) -> dict:
     trading_mode = os.getenv("TRADING_MODE", "dry-run").lower()
     is_live = trading_mode == "live"
     
-    # Initialize exchange if in live mode
-    exchange = None
+    # Initialize exchange client if in live mode
+    client = None
     if is_live:
         try:
             exchange_name = os.getenv("EXCHANGE_NAME", "bitget")
-            exchange = get_exchange_client(exchange_name)
-            logger.info(f"✓ Connected to {exchange_name} ({'LIVE' if not exchange.sandbox else 'SANDBOX'})")
+            client = get_client(exchange_name)
+            logger.info(f"✓ Connected to {exchange_name} exchange")
         except Exception as e:
             logger.error(f"Failed to initialize exchange: {e}")
             logger.warning("Falling back to simulation mode")
@@ -327,12 +223,12 @@ def execute_trade(state: AgentState) -> dict:
         logger.info(f"{'='*60}\n")
         
         # Execute based on mode
-        if is_live and exchange:
+        if is_live and client:
             # Real execution
             try:
                 if side == "LONG":
                     result = execute_buy_order(
-                        exchange=exchange,
+                        client=client,
                         symbol=symbol,
                         amount=amount,
                         entry_price=entry_price,
@@ -342,7 +238,7 @@ def execute_trade(state: AgentState) -> dict:
                     )
                 elif side == "SHORT":
                     result = execute_sell_order(
-                        exchange=exchange,
+                        client=client,
                         symbol=symbol,
                         amount=amount,
                         entry_price=entry_price,

@@ -1,312 +1,245 @@
 """
-Account Manager - Model account management and synchronization
-Migrated from Super-nof1.ai/lib/trading/model-account-manager.ts
+Simplified Account Manager - Single trading account management
 """
 
 import os
-from typing import Optional, List, Dict, Any
+from typing import Optional, Dict, Any, List
+from dataclasses import dataclass
 from sqlalchemy.orm import Session
 from dotenv import load_dotenv
 
-from .models import ModelAccount, ModelType, Trading, ModelPerformanceSnapshot
-from .session import get_db
+from .session import get_session
 from ..logger import get_logger
 
 load_dotenv()
 logger = get_logger(__name__)
 
-# Import exchange client (to be created)
-# from ..trading.exchange_client import get_exchange_client
 
-class ModelAccountInfo:
-    """Model account information structure"""
+@dataclass
+class AccountInfo:
+    """Trading account information"""
+    total_balance: float
+    available_balance: float
+    used_margin: float
+    unrealized_pnl: float
+    positions: List[Dict[str, Any]]
+    open_orders: List[Dict[str, Any]]
+
+
+class AccountManager:
+    """
+    Simplified account manager for a single trading account.
+    Handles both real exchange API and mock data for dry-run mode.
+    """
+    
     def __init__(
         self,
-        id: str,
-        model: ModelType,
-        name: str,
-        currentBalance: float,
-        availableBalance: float,
-        totalEquity: float,
-        unrealizedPnl: float,
-        margin: float,
-        positions: List[Dict],
-        openOrders: List[Dict],
-        totalTrades: int,
-        winningTrades: int,
-        losingTrades: int,
-        totalPnL: float,
-        totalPnLPercentage: float,
-        winRate: float,
-        maxDrawdown: float,
-        sharpeRatio: float,
-        isActive: bool
+        exchange_id: str = "bitget",
+        api_key: Optional[str] = None,
+        api_secret: Optional[str] = None,
+        passphrase: Optional[str] = None,
+        sandbox: bool = True,
+        use_mock: bool = False
     ):
-        self.id = id
-        self.model = model
-        self.name = name
-        self.currentBalance = currentBalance
-        self.availableBalance = availableBalance
-        self.totalEquity = totalEquity
-        self.unrealizedPnl = unrealizedPnl
-        self.margin = margin
-        self.positions = positions
-        self.openOrders = openOrders
-        self.totalTrades = totalTrades
-        self.winningTrades = winningTrades
-        self.losingTrades = losingTrades
-        self.totalPnL = totalPnL
-        self.totalPnLPercentage = totalPnLPercentage
-        self.winRate = winRate
-        self.maxDrawdown = maxDrawdown
-        self.sharpeRatio = sharpeRatio
-        self.isActive = isActive
-
-
-def get_or_create_model_account(
-    model: ModelType,
-    name: str,
-    api_key: str,
-    api_secret: str,
-    passphrase: Optional[str] = None,
-    db: Optional[Session] = None
-) -> ModelAccount:
-    """
-    Get or create model account with exchange API credentials
-    
-    Args:
-        model: Model type enum
-        name: Display name for the model
-        api_key: Exchange API key
-        api_secret: Exchange API secret
-        passphrase: Exchange passphrase (if required)
-        db: Database session (optional)
+        """
+        Initialize account manager
         
-    Returns:
-        ModelAccount instance
-    """
-    should_close = False
-    if db is None:
-        db = get_session()
-        should_close = True
-    
-    try:
-        # Check if account exists
-        account = db.query(ModelAccount).filter_by(model=model).first()
+        Args:
+            exchange_id: Exchange name (default: bitget)
+            api_key: Exchange API key (reads from env if not provided)
+            api_secret: Exchange API secret (reads from env if not provided)
+            passphrase: Exchange passphrase (reads from env if not provided)
+            sandbox: Use sandbox/testnet mode
+            use_mock: Force use of mock data (for dry-run)
+        """
+        self.exchange_id = exchange_id
+        self.use_mock = use_mock
+        self.sandbox = sandbox
         
-        if not account:
-            # Create new account
-            account = ModelAccount(
-                model=model,
-                name=name,
-                bitgetApiKey=api_key,
-                bitgetApiSecret=api_secret,
-                bitgetPassphrase=passphrase,
-                initialCapital=0.0,
-                currentBalance=0.0,
-                availableBalance=0.0,
-                isActive=True
-            )
-            db.add(account)
-            db.commit()
-            db.refresh(account)
-            logger.info(f"✓ Created new model account: {model.value}")
-        else:
-            # Update API credentials if changed
-            updated = False
-            if account.bitgetApiKey != api_key:
-                account.bitgetApiKey = api_key
-                updated = True
-            if account.bitgetApiSecret != api_secret:
-                account.bitgetApiSecret = api_secret
-                updated = True
-            if account.bitgetPassphrase != passphrase:
-                account.bitgetPassphrase = passphrase
-                updated = True
+        # Load credentials from env if not provided
+        if not use_mock:
+            self.api_key = api_key or os.getenv("BITGET_API_KEY")
+            self.api_secret = api_secret or os.getenv("BITGET_API_SECRET")
+            self.passphrase = passphrase or os.getenv("BITGET_PASSPHRASE")
             
-            if updated:
-                db.commit()
-                logger.info(f"✓ Updated model account credentials: {model.value}")
+            # Check if we have all required credentials
+            if not all([self.api_key, self.api_secret, self.passphrase]):
+                logger.warning("Missing exchange credentials, using mock data")
+                self.use_mock = True
         
-        return account
+        # Initialize exchange client if not using mock
+        self.client = None
+        if not self.use_mock:
+            try:
+                from ..trading.exchange_client import CCXTExchangeClient
+                
+                self.client = CCXTExchangeClient(
+                    exchange_id=self.exchange_id,
+                    api_key=self.api_key,
+                    api_secret=self.api_secret,
+                    password=self.passphrase,
+                    sandbox=self.sandbox
+                )
+                logger.info(f"✓ Exchange client initialized: {exchange_id} ({'SANDBOX' if sandbox else 'LIVE'})")
+            except Exception as e:
+                logger.error(f"Failed to initialize exchange client: {e}")
+                logger.warning("Falling back to mock data")
+                self.use_mock = True
         
-    finally:
-        if should_close:
-            db.close()
+        # Mock data for dry-run
+        self.mock_balance = 10000.0
+        self.mock_available = 9000.0
+        self.mock_positions: List[Dict] = []
+        self.mock_orders: List[Dict] = []
+    
+    def get_account_info(self) -> AccountInfo:
+        """
+        Get current account information
+        
+        Returns:
+            AccountInfo with balance, positions, and orders
+        """
+        if self.use_mock:
+            return AccountInfo(
+                total_balance=self.mock_balance,
+                available_balance=self.mock_available,
+                used_margin=self.mock_balance - self.mock_available,
+                unrealized_pnl=0.0,
+                positions=self.mock_positions.copy(),
+                open_orders=self.mock_orders.copy()
+            )
+        
+        try:
+            # Fetch from real exchange
+            balance_info = self.client.get_account_info()
+            positions_list = self.client.get_positions()
+            orders_list = self.client.get_open_orders()
+            
+            # Convert to dicts
+            positions = [
+                {
+                    "symbol": p.symbol,
+                    "side": p.side,
+                    "size": p.size,
+                    "entry_price": p.entry_price,
+                    "mark_price": p.mark_price,
+                    "unrealized_pnl": p.unrealized_pnl,
+                    "leverage": p.leverage,
+                    "margin_type": p.margin_type
+                }
+                for p in positions_list
+            ]
+            
+            orders = [
+                {
+                    "id": o.id,
+                    "symbol": o.symbol,
+                    "side": o.side,
+                    "price": o.price,
+                    "amount": o.amount,
+                    "status": o.status,
+                    "filled": o.filled,
+                    "remaining": o.remaining
+                }
+                for o in orders_list
+            ]
+            
+            logger.info(f"✅ Account synced: Balance=${balance_info.total:.2f}, Positions={len(positions)}, Orders={len(orders)}")
+            
+            return AccountInfo(
+                total_balance=balance_info.total,
+                available_balance=balance_info.free,
+                used_margin=balance_info.used,
+                unrealized_pnl=balance_info.upnl,
+                positions=positions,
+                open_orders=orders
+            )
+            
+        except Exception as e:
+            logger.error(f"Failed to fetch account info: {e}")
+            logger.warning("Falling back to mock data")
+            
+            # Return mock data on error
+            return AccountInfo(
+                total_balance=self.mock_balance,
+                available_balance=self.mock_available,
+                used_margin=self.mock_balance - self.mock_available,
+                unrealized_pnl=0.0,
+                positions=self.mock_positions.copy(),
+                open_orders=self.mock_orders.copy()
+            )
+    
+    def update_balance(self, new_balance: float, new_available: float):
+        """
+        Update mock balance (for dry-run simulation)
+        
+        Args:
+            new_balance: New total balance
+            new_available: New available balance
+        """
+        if self.use_mock:
+            self.mock_balance = new_balance
+            self.mock_available = new_available
+            logger.info(f"💰 Mock balance updated: ${new_balance:.2f} (available: ${new_available:.2f})")
+    
+    def add_mock_position(self, position: Dict[str, Any]):
+        """Add a mock position (for dry-run simulation)"""
+        if self.use_mock:
+            self.mock_positions.append(position)
+            logger.info(f"📍 Mock position added: {position.get('symbol')} {position.get('side')}")
+    
+    def remove_mock_position(self, symbol: str):
+        """Remove a mock position (for dry-run simulation)"""
+        if self.use_mock:
+            self.mock_positions = [p for p in self.mock_positions if p.get('symbol') != symbol]
+            logger.info(f"📍 Mock position removed: {symbol}")
+    
+    def add_mock_order(self, order: Dict[str, Any]):
+        """Add a mock order (for dry-run simulation)"""
+        if self.use_mock:
+            self.mock_orders.append(order)
+            logger.info(f"📋 Mock order added: {order.get('id')}")
+    
+    def remove_mock_order(self, order_id: str):
+        """Remove a mock order (for dry-run simulation)"""
+        if self.use_mock:
+            self.mock_orders = [o for o in self.mock_orders if o.get('id') != order_id]
+            logger.info(f"📋 Mock order removed: {order_id}")
 
 
-def sync_model_account_from_exchange(
-    model: ModelType,
-    db: Optional[Session] = None
-) -> ModelAccountInfo:
+# Global singleton instance
+_account_manager: Optional[AccountManager] = None
+
+
+def get_account_manager(
+    force_recreate: bool = False,
+    **kwargs
+) -> AccountManager:
     """
-    Sync account data from exchange API
+    Get or create singleton account manager instance
     
     Args:
-        model: Model type to sync
-        db: Database session (optional)
+        force_recreate: Force recreate the manager
+        **kwargs: Arguments to pass to AccountManager constructor
         
     Returns:
-        ModelAccountInfo with current data
+        AccountManager instance
     """
-    should_close = False
-    if db is None:
-        from .session import get_session
-        db = get_session()
-        should_close = True
+    global _account_manager
     
-    try:
-        account = db.query(ModelAccount).filter_by(model=model).first()
+    if _account_manager is None or force_recreate:
+        # Determine if we should use mock based on trading mode
+        trading_mode = os.getenv("TRADING_MODE", "dry-run")
+        use_mock = kwargs.pop("use_mock", trading_mode != "live")
         
-        if not account:
-            raise ValueError(f"Model account not found for {model.value}")
-        
-        # TODO: Implement exchange API sync using ccxt
-        # For now, return mock data
-        logger.warning(f"Exchange sync not yet implemented for {model.value}, returning mock data")
-        
-        # Mock balance data
-        balance = {
-            "total": account.currentBalance or 10000.0,
-            "free": account.availableBalance or 9000.0,
-            "used": 1000.0,
-            "upnl": 0.0
-        }
-        
-        positions = []
-        openOrders = []
-        
-        # Calculate initial capital if not set
-        if account.initialCapital == 0:
-            account.initialCapital = balance["total"]
-            db.commit()
-        
-        # Calculate performance
-        totalPnL = balance["total"] - account.initialCapital
-        totalPnLPercentage = (totalPnL / account.initialCapital * 100) if account.initialCapital > 0 else 0
-        
-        # Update account
-        account.currentBalance = balance["total"]
-        account.availableBalance = balance["free"]
-        account.totalPnL = totalPnL
-        account.totalPnLPercentage = totalPnLPercentage
-        db.commit()
-        
-        # Calculate win rate
-        total_trades = account.totalTrades
-        win_rate = (account.winningTrades / total_trades * 100) if total_trades > 0 else 0
-        
-        return ModelAccountInfo(
-            id=account.id,
-            model=account.model,
-            name=account.name,
-            currentBalance=balance["total"],
-            availableBalance=balance["free"],
-            totalEquity=balance["total"],
-            unrealizedPnl=balance["upnl"],
-            margin=balance["used"],
-            positions=positions,
-            openOrders=openOrders,
-            totalTrades=account.totalTrades,
-            winningTrades=account.winningTrades,
-            losingTrades=account.losingTrades,
-            totalPnL=totalPnL,
-            totalPnLPercentage=totalPnLPercentage,
-            winRate=win_rate,
-            maxDrawdown=account.maxDrawdown,
-            sharpeRatio=account.sharpeRatio,
-            isActive=account.isActive
-        )
-        
-    finally:
-        if should_close:
-            db.close()
-
-
-def get_all_model_accounts(db: Optional[Session] = None) -> List[ModelAccountInfo]:
-    """Get all active model accounts"""
-    should_close = False
-    if db is None:
-        from .session import get_session
-        db = get_session()
-        should_close = True
+        _account_manager = AccountManager(use_mock=use_mock, **kwargs)
+        logger.info(f"✓ Account manager created ({'MOCK' if use_mock else 'LIVE'} mode)")
     
-    try:
-        accounts = db.query(ModelAccount).filter_by(isActive=True).all()
-        return [sync_model_account_from_exchange(acc.model, db) for acc in accounts]
-    finally:
-        if should_close:
-            db.close()
+    return _account_manager
 
 
-def update_model_trade_stats(
-    model: ModelType,
-    is_win: Optional[bool] = None,
-    pnl: Optional[float] = None,
-    db: Optional[Session] = None
-) -> None:
-    """Update trade statistics for a model account"""
-    should_close = False
-    if db is None:
-        from .session import get_session
-        db = get_session()
-        should_close = True
-    
-    try:
-        account = db.query(ModelAccount).filter_by(model=model).first()
-        if not account:
-            return
-        
-        account.totalTrades += 1
-        
-        if is_win is not None:
-            if is_win:
-                account.winningTrades += 1
-            else:
-                account.losingTrades += 1
-        
-        db.commit()
-        logger.info(f"✓ Updated trade stats for {model.value}")
-        
-    finally:
-        if should_close:
-            db.close()
-
-
-def create_performance_snapshot(
-    model: ModelType,
-    db: Optional[Session] = None
-) -> None:
-    """Create performance snapshot for historical tracking"""
-    should_close = False
-    if db is None:
-        from .session import get_session
-        db = get_session()
-        should_close = True
-    
-    try:
-        account_info = sync_model_account_from_exchange(model, db)
-        account = db.query(ModelAccount).filter_by(model=model).first()
-        
-        if not account:
-            return
-        
-        snapshot = ModelPerformanceSnapshot(
-            modelAccountId=account.id,
-            balance=account_info.currentBalance,
-            totalPnL=account_info.totalPnL,
-            totalPnLPercentage=account_info.totalPnLPercentage,
-            totalTrades=account_info.totalTrades,
-            winRate=account_info.winRate,
-            sharpeRatio=account_info.sharpeRatio,
-            maxDrawdown=account_info.maxDrawdown,
-            openPositions=len(account_info.positions)
-        )
-        
-        db.add(snapshot)
-        db.commit()
-        logger.info(f"✓ Created performance snapshot for {model.value}")
-        
-    finally:
-        if should_close:
-            db.close()
+def reset_account_manager():
+    """Reset the singleton account manager (useful for testing)"""
+    global _account_manager
+    _account_manager = None
+    logger.info("Account manager reset")

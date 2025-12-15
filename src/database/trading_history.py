@@ -8,9 +8,9 @@ from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
 
-from .models import ModelAccount, Trading, TradingLesson, ModelType, OperationType, SymbolType
+from .models import Trading, TradingLesson, OperationType, SymbolType
 from .session import get_session
-from .account_manager import sync_model_account_from_exchange, ModelAccountInfo
+from .account_manager import get_account_manager, AccountInfo
 from ..logger import get_logger
 
 logger = get_logger(__name__)
@@ -39,57 +39,24 @@ class AccountPerformance:
         self.sharpeRatio = sharpeRatio
 
 
-def get_default_model(db: Optional[Session] = None) -> ModelType:
-    """Get default model type from env or first active account"""
-    should_close = False
-    if db is None:
-        db = get_session()
-        should_close = True
-    
-    try:
-        import os
-        default_model_env = os.getenv("DEFAULT_MODEL")
-        
-        if default_model_env:
-            try:
-                model = ModelType[default_model_env]
-                account = db.query(ModelAccount).filter_by(model=model, isActive=True).first()
-                if account:
-                    return model
-            except KeyError:
-                pass
-        
-        # Fallback: get first active account
-        first_active = db.query(ModelAccount).filter_by(isActive=True).order_by("createdAt").first()
-        
-        if not first_active:
-            raise ValueError("No active model account found. Please create a model account first.")
-        
-        return first_active.model
-        
-    finally:
-        if should_close:
-            db.close()
-
-
-def convert_model_account_to_performance(
-    model_account: ModelAccountInfo,
+def convert_account_info_to_performance(
+    account_info: AccountInfo,
     initial_capital: Optional[float] = None
 ) -> AccountPerformance:
-    """Convert ModelAccountInfo to AccountPerformance format"""
+    """Convert AccountInfo to AccountPerformance format"""
     
     # Convert positions to expected format
     positions = [{
         "symbol": pos.get("symbol"),
         "contracts": pos.get("size", 0),
-        "entryPrice": pos.get("entryPrice", 0),
-        "markPrice": pos.get("markPrice", 0),
-        "unrealizedPnl": pos.get("pnl", 0),
+        "entryPrice": pos.get("entry_price", 0),
+        "markPrice": pos.get("mark_price", 0),
+        "unrealizedPnl": pos.get("unrealized_pnl", 0),
         "leverage": pos.get("leverage", 1),
-        "initialMargin": pos.get("margin", 0),
+        "initialMargin": pos.get("used_margin", 0),
         "side": pos.get("side"),
-        "notional": pos.get("size", 0) * pos.get("markPrice", 0),
-    } for pos in model_account.positions]
+        "notional": pos.get("size", 0) * pos.get("mark_price", 0),
+    } for pos in account_info.positions]
     
     currentPositionsValue = sum(
         pos["initialMargin"] + pos["unrealizedPnl"] 
@@ -98,13 +65,13 @@ def convert_model_account_to_performance(
     
     contractValue = sum(abs(pos["contracts"]) for pos in positions)
     
-    totalAccountValue = model_account.totalEquity
-    availableCash = model_account.availableBalance
+    totalAccountValue = account_info.total_balance
+    availableCash = account_info.available_balance
     
-    base_capital = initial_capital or model_account.currentBalance
+    base_capital = initial_capital or account_info.total_balance
     currentTotalReturn = (totalAccountValue - base_capital) / base_capital if base_capital > 0 else 0
     
-    logger.info(f"💰 Account Value (Model: {model_account.model.value}):")
+    logger.info(f"💰 Account Value (Model: Qwen):")
     logger.info(f"   Total Equity: ${totalAccountValue:.2f}")
     logger.info(f"   Available: ${availableCash:.2f}")
     logger.info(f"   Return: {currentTotalReturn*100:.2f}%")
@@ -117,44 +84,35 @@ def convert_model_account_to_performance(
         availableCash=availableCash,
         currentTotalReturn=currentTotalReturn,
         positions=positions,
-        openOrders=model_account.openOrders,
-        sharpeRatio=model_account.sharpeRatio
+        openOrders=account_info.open_orders,
+        sharpeRatio=0.0  # TODO: Calculate from trade history
     )
 
 
 def get_account_performance(
     initial_capital: Optional[float] = None,
-    model: Optional[ModelType] = None,
+    model: Optional[str] = None,  # Kept for backward compatibility but not used
     db: Optional[Session] = None
 ) -> AccountPerformance:
     """
-    Get account performance for a specific model
+    Get account performance
     
     Args:
         initial_capital: Optional initial capital for return calculation
-        model: Optional model type (uses default if not provided)
-        db: Database session
+        model: Deprecated, kept for backward compatibility
+        db: Database session (not used with new account manager)
         
     Returns:
         AccountPerformance object
     """
-    should_close = False
-    if db is None:
-        db = get_session()
-        should_close = True
+    logger.info(f"🔄 Fetching account info for model: Qwen")
     
-    try:
-        target_model = model or get_default_model(db)
-        logger.info(f"🔄 Fetching account info for model: {target_model.value}")
-        
-        model_account = sync_model_account_from_exchange(target_model, db)
-        logger.info(f"✅ Account info fetched for {target_model.value}")
-        
-        return convert_model_account_to_performance(model_account, initial_capital)
-        
-    finally:
-        if should_close:
-            db.close()
+    account_manager = get_account_manager()
+    account_info = account_manager.get_account_info()
+    
+    logger.info(f"✅ Account info fetched for Qwen")
+    
+    return convert_account_info_to_performance(account_info, initial_capital)
 
 
 def get_recent_trades(limit: int = 10, db: Optional[Session] = None) -> List[Dict]:

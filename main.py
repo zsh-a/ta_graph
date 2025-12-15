@@ -1,59 +1,266 @@
-from langfuse import observe
-from src.graph import create_graph
-from src.utils.timeframe_config import get_primary_timeframe
-import json
+"""
+完整的交易系统主程序 - Supervisor Pattern
 
-@observe(name="Run Trading Agent")
+使用LangGraph Supervisor架构：
+1. 声明式图结构替代while循环
+2. 状态持久化（程序崩溃不丢失数据）
+3. 清晰的路由逻辑
+4. 易于扩展和测试
+"""
+
+import os
+import time
+from datetime import datetime
+from langfuse import observe
+
+from src.config import load_config
+from src.supervisor_graph import build_trading_supervisor
+from src.enhanced_logging import setup_enhanced_logging, get_trade_logger, get_metrics_logger
+from src.dashboard import get_dashboard, start_dashboard_server
+from src.monitoring import get_heartbeat_monitor
+from src.logger import get_logger
+
+logger = get_logger(__name__)
+
+
+@observe(name="Trading System - Supervisor Pattern")
 def main():
-    print("Starting VL Trading Agent (Migrated)...")
-    app = create_graph()
+    """
+    主程序 - 极简Runner
     
-    # 从配置获取时间周期
-    primary_timeframe = get_primary_timeframe()
+    职责：
+    1. 加载配置
+    2. 初始化基础设施（日志、监控）
+    3. 构建Supervisor Graph
+    4. 定期"踢"一次图（Tick）
+    5. 优雅处理异常
+    """
     
-    # Initial state
-    initial_state = {
-        "symbol": "BTC/USDT",
-        "primary_timeframe": primary_timeframe,
-        "messages": [],
-        "positions": {},
-        "account_info": {
-            "available_cash": 10000.0,
-            "daily_pnl_percent": 0.0,
-            "open_orders": []
+    # ========== 1. 加载配置 ==========
+    try:
+        config = load_config()
+    except Exception as e:
+        print(f"❌ Configuration error: {e}")
+        print("Please check your .env file and try again.")
+        return
+    
+    # ========== 2. 设置基础设施 ==========
+    
+    # 日志系统
+    setup_enhanced_logging(
+        log_dir=config.logging.log_dir,
+        console_level=config.logging.level,
+        file_level="DEBUG",
+        structured=config.logging.structured
+    )
+    
+    trade_logger = get_trade_logger()
+    metrics_logger = get_metrics_logger()
+    
+    logger.info("="*70)
+    logger.info(" "*20 + "TRADING SYSTEM - SUPERVISOR PATTERN")
+    logger.info("="*70)
+    logger.info(f"Trading Mode: {config.system.trading_mode}")
+    logger.info(f"Exchange: {config.exchange.name} (Sandbox: {config.exchange.sandbox})")
+    logger.info(f"Symbol: {os.getenv('TRADING_SYMBOL', 'BTC/USDT')}")
+    logger.info(f"Timeframe: {config.timeframe.primary}")
+    logger.info(f"Max Leverage: {config.risk.default_leverage}x")
+    logger.info(f"Max Daily Loss: {config.risk.max_daily_loss_percent}%")
+    logger.info("="*70)
+    
+    # 生产环境警告
+    if config.system.trading_mode == "live" and not config.exchange.sandbox:
+        logger.warning("\n" + "!"*70)
+        logger.warning(" "*20 + "⚠️  PRODUCTION MODE - REAL MONEY AT RISK ⚠️")
+        logger.warning("!"*70 + "\n")
+        time.sleep(3)
+    
+    # 仪表盘
+    dashboard = get_dashboard()
+    dashboard.update_status("initializing")
+    
+    if os.getenv("ENABLE_DASHBOARD_SERVER", "false").lower() == "true":
+        start_dashboard_server(port=8000)
+        logger.info("✓ Dashboard server started at http://localhost:8000")
+    
+    # 心跳监控
+    heartbeat = get_heartbeat_monitor(interval_seconds=30, timeout_seconds=120)
+    heartbeat.start()
+    logger.info("✓ Heartbeat monitor started")
+    
+    # ========== 3. 构建Supervisor Graph ==========
+    
+    logger.info("\n🏗️  Building supervisor graph...")
+    
+    # 创建checkpointer（使用with管理生命周期）
+    db_path = os.path.join(config.system.data_dir, "trading_state.db")
+    os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    
+    # 使用with语句确保数据库连接在整个程序运行期间保持打开
+    from langgraph.checkpoint.sqlite import SqliteSaver
+    
+    with SqliteSaver.from_conn_string(db_path) as checkpointer:
+        logger.info(f"✓ Checkpointer created: {db_path}")
+        
+        # 构建图（注入checkpointer）
+        app = build_trading_supervisor(checkpointer=checkpointer)
+        
+        logger.info("✓ Supervisor graph ready")
+        
+        # ========== 4. 配置会话 ==========
+        
+        symbol = os.getenv("TRADING_SYMBOL", "BTC/USDT")
+        
+        # thread_id 用于区分不同的交易会话
+        # 如果你同时交易多个品种，可以为每个品种创建独立的thread
+        thread_id = f"{symbol.replace('/', '_')}_{config.timeframe.primary}"
+        
+        config_dict = {
+            "configurable": {
+                "thread_id": thread_id
+            }
         }
-    }
-    
-    print(f"Running graph for {initial_state['symbol']}...")
-    # Invoke the graph
-    result = app.invoke(initial_state)
-    
-    print("\n=== Final State ===")
-    
-    if result.get("market_analysis"):
-        print("\n--- Market Analysis ---")
-        ma = result['market_analysis']
-        print(f"Summary: {ma.get('summary')}")
-        print(f"Trend: {ma.get('trend')}")
-        print(f"Signal: {ma.get('signal')}")
         
-    if result.get("decisions"):
-        print("\n--- Decisions ---")
-        for d in result['decisions']:
-            print(f"Operation: {d.get('operation')}")
-            print(f"Symbol: {d.get('symbol')}")
-            print(f"Rationale: {d.get('rationale')}")
-            if d.get('buy'):
-                print(f"Buy Order: {d['buy']}")
-            if d.get('sell'):
-                print(f"Sell Order: {d['sell']}")
+        # 初始状态（仅在首次运行时使用）
+        initial_state = {
+            "symbol": symbol,
+            "exchange": config.exchange.name,
+            "timeframe": 60,  # TODO: 从config.timeframe.primary解析
+            "status": "hunting",
+            "account_balance": 10000.0,
+            "position": None,
+            "loop_count": 0,
+            "daily_pnl": 0.0,
+            "consecutive_losses": 0,
+            "max_daily_loss_pct": config.risk.max_daily_loss_percent,
+            "is_trading_enabled": True,
+            "breakeven_locked": False,
+            "followthrough_checked": False,
+            "should_exit": False,
+            "messages": [],
+            "errors": []
+        }
         
-    if result.get("execution_results"):
-        print("\n--- Execution Results ---")
-        for ex in result['execution_results']:
-            print(f"Result: {ex}")
+        logger.info(f"✓ Session configured: {thread_id}")
+        logger.info("\n" + "="*70)
+        logger.info(" "*25 + "🚀 SYSTEM LAUNCHED")
+        logger.info("="*70 + "\n")
+        
+        # ========== 5. 主循环：定期Tick图 ==========
+        
+        tick_count = 0
+        
+        try:
+            while True:
+                tick_count += 1
+                heartbeat.beat()
+                
+                logger.info(f"\n{'─'*70}")
+                logger.info(f"⚡ Tick #{tick_count} @ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+                logger.info(f"{'─'*70}")
+                
+                # --- 执行一次图运行 ---
+                # LangGraph会自动从DB加载上次状态并合并新输入
+                
+                try:
+                    start_time = time.time()
+                    
+                    # 传入空dict让图从DB恢复，或传入initial_state（首次）
+                    result = app.invoke(
+                        initial_state if tick_count == 1 else {},
+                        config=config_dict
+                    )
+                    
+                    duration_ms = (time.time() - start_time) * 1000
+                    metrics_logger.log_execution_time("supervisor_tick", duration_ms)
+                    
+                    # --- 提取结果 ---
+                    current_status = result.get("status", "unknown")
+                    has_position = result.get("position") is not None
+                    has_order = result.get("pending_order_id") is not None
+                    
+                    logger.info(f"Status: {current_status}")
+                    logger.info(f"Position: {'Yes' if has_position else 'No'}")
+                    logger.info(f"Order: {'Yes' if has_order else 'No'}")
+                    logger.info(f"Duration: {duration_ms:.1f}ms")
+                    
+                    # 更新仪表盘
+                    dashboard.update_status(current_status)
+                    dashboard.update_position(result.get("position"))
+                    dashboard.record_execution_time("tick", duration_ms)
+                    
+                    # 检查错误
+                    errors = result.get("errors", [])
+                    if errors:
+                        logger.warning(f"⚠️  Errors in this tick: {len(errors)}")
+                        for err in errors[-3:]:  # 只显示最后3个
+                            logger.warning(f"  - {err}")
+                            dashboard.record_error(err)
+                    
+                    # --- 决定休眠时间 ---
+                    # 有持仓：频繁检查（30秒）
+                    # 无持仓：正常间隔（60秒）
+                    # 冷却中：长时间休眠（120秒）
+                    
+                    if current_status == "cooldown":
+                        sleep_time = 120
+                        mode_emoji = "❄️"
+                        mode_name = "COOLDOWN"
+                    elif has_position or has_order:
+                        sleep_time = 30
+                        mode_emoji = "📊"
+                        mode_name = "MANAGING"
+                    else:
+                        sleep_time = 60
+                        mode_emoji = "🔍"
+                        mode_name = "HUNTING"
+                    
+                    logger.info(f"\n{mode_emoji} [{mode_name}] Tick complete. Sleeping {sleep_time}s...")
+                    
+                    # 定期保存仪表盘快照
+                    if tick_count % 10 == 0:
+                        dashboard.save_snapshot()
+                    
+                    # 定期打印仪表盘（可选）
+                    if tick_count % 20 == 0:
+                        dashboard.print_dashboard()
+                    
+                    time.sleep(sleep_time)
+                    
+                except Exception as e:
+                    logger.exception(f"❌ Tick failed: {e}")
+                    # logger.error(f"❌ Tick failed: {e}", exc_info=True)
+                    dashboard.record_error(str(e))
+                    
+                    # 出错后短暂休眠然后重试
+                    time.sleep(10)
+        
+        except KeyboardInterrupt:
+            logger.info("\n\n" + "="*70)
+            logger.info(" "*25 + "🛑 STOPPED BY USER")
+            logger.info("="*70)
+        
+        except Exception as e:
+            logger.error(f"\n💥 CRITICAL ERROR: {e}", exc_info=True)
+            dashboard.record_error(f"Critical: {str(e)}")
+        
+        finally:
+            # ========== 6. 清理 ==========
             
-    print("\nDone.")
+            logger.info("\n" + "="*70)
+            logger.info(" "*25 + "SHUTTING DOWN...")
+            logger.info("="*70)
+            
+            heartbeat.stop()
+            
+            # 最终仪表盘
+            dashboard.print_dashboard()
+            dashboard.save_snapshot()
+            
+            logger.info(f"\nTotal Ticks: {tick_count}")
+            logger.info("State saved to DB. Next run will resume from here.")
+            logger.info("\n✅ SHUTDOWN COMPLETE\n")
+
 
 if __name__ == "__main__":
     main()
