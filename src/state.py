@@ -82,9 +82,12 @@ class AgentState(TypedDict, total=False):
     positions: dict
     account_info: dict
     market_data: Optional[dict]
+    market_states: Optional[List[dict]]  # Added for P0 fix
     market_analysis: Optional[dict]
     brooks_analysis: Optional[dict]
     decisions: Optional[List[dict]]
     execution_results: Optional[List[dict]]
     bars: List[dict]
     current_bar: Optional[dict]
+    warnings: Optional[List[str]]  # Added for execution visibility
+    execution_metadata: Optional[dict]  # Added for execution tracking

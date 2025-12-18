@@ -154,6 +154,7 @@ def fetch_market_data(state: AgentState) -> dict:
     
     return {
         "market_data": market_data_dict,
+        "market_states": [market_data_dict],  # List format for consistency
         "bars": bars,
         "current_bar": bars[-1] if bars else None,
         "current_price": float(current_price),

@@ -234,13 +234,20 @@ def main():
                     dashboard.update_position(result.get("position"))
                     dashboard.record_execution_time("tick", duration_ms)
                     
-                    # 检查错误
+                    # Check errors
                     errors = result.get("errors", [])
                     if errors:
                         logger.warning(f"⚠️  Errors in this tick: {len(errors)}")
-                        for err in errors[-3:]:  # 只显示最后3个
+                        for err in errors[-3:]:  # Only last 3
                             logger.warning(f"  - {err}")
                             dashboard.record_error(err)
+                    
+                    # Check warnings from nodes (e.g., execution visibility failures)
+                    warnings = result.get("warnings", [])
+                    if warnings:
+                        logger.warning(f"⚠️  Warnings in this tick: {len(warnings)}")
+                        for warn in warnings:
+                            logger.warning(f"  - {warn}")
                     
                     # --- K线对齐模式 ---
                     # 所有状态都在K线收盘时执行（由candle_timer控制）

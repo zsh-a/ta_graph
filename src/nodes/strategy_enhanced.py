@@ -18,6 +18,7 @@ from ..logger import get_logger
 from ..utils.model_manager import get_llm
 from ..utils.trade_filters import get_trade_filter
 from ..nodes.brooks_analyzer import create_hold_decision, should_force_hold
+from ..utils.timeout_decorator import with_timeout
 
 load_dotenv()
 logger = get_logger(__name__)
@@ -100,9 +101,26 @@ class DecisionResponse(BaseModel):
     decisions: List[TradingDecision] = Field(min_length=1, max_length=1)
 
 
+# ==================== Fallback Function ====================
+
+def strategy_fallback(state: AgentState) -> dict:
+    """
+    Fallback if strategy generation times out.
+    Returns safe Hold decision.
+    """
+    logger.warning("⏱️ Strategy generation timed out - defaulting to HOLD")
+    brooks_analysis = state.get("brooks_analysis")
+    return {
+        "decisions": [create_hold_decision(
+            wait_reason="Strategy generation exceeded timeout - recommending HOLD for safety",
+            brooks_analysis=brooks_analysis
+        )]
+    }
+
 # ==================== Enhanced Node Logic ====================
 
 @observe()
+@with_timeout(timeout_seconds=90, fallback_fn=strategy_fallback, operation_name="Strategy Generation")
 def generate_strategy(state: AgentState) -> dict:
     """
     Enhanced strategy generation with Brooks analysis and trade filters.

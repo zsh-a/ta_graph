@@ -7,6 +7,12 @@ from ..utils.price_calculator import calculate_entry_price, calculate_stop_loss_
 
 logger = get_logger(__name__)
 
+# ========== Helpers ==========
+
+def normalize_symbol(symbol: str) -> str:
+    """Normalize symbol to base currency (BTC, ETH, etc.)"""
+    return symbol.split('/')[0].split(':')[0]
+
 class RiskConfig:
     def __init__(self):
         mode = os.getenv("TRADING_MODE", "dry-run").lower()
@@ -29,11 +35,13 @@ def assess_risk(state: AgentState) -> dict:
     """
     logger.info("Assessing Risk...")
     decisions = state.get("decisions", [])
-    if not decisions:
-        logger.info("No decisions to process.")
-        return {"execution_results": []}
-
-    market_states = { m['symbol']: m for m in state.get("market_states", [])}
+    
+    # Create dict from market_states list with normalized symbols as keys
+    raw_market_states = state.get("market_states", [])
+    if not raw_market_states:
+        raise ValueError("market_states is empty - cannot assess risk without market data")
+    
+    market_states = {normalize_symbol(m['symbol']): m for m in raw_market_states}
     
     # Get real account info from database if available
     try:
@@ -78,18 +86,18 @@ def assess_risk(state: AgentState) -> dict:
             })
             continue
             
-        # Get Market Data (OHLCV)
-        m_state = market_states.get(symbol) # Or match by symbol name if partial
-        # Symbols might mismatch (BTC vs BTC/USDT), handled loosely here or needs mapping
-        # Assuming exact match or first available for now if simple
-        if not m_state:
-             # Try finding "BTC/USDT" for "BTC"
-             key = next((k for k in market_states if symbol in k), None)
-             if key: m_state = market_states[key]
+        # Get Market Data (OHLCV) using normalized symbol
+        normalized_sym = normalize_symbol(symbol)
+        m_state = market_states.get(normalized_sym)
         
         if not m_state:
-            logger.error(f"Market data not found for {symbol}")
-            continue
+            logger.error(f"Market data not found for {symbol} (normalized: {normalized_sym})")
+            logger.error(f"Available symbols: {list(market_states.keys())}")
+            raise KeyError(
+                f"Missing market data for symbol {symbol}. "
+                f"Expected normalized key '{normalized_sym}' not found in market_states. "
+                f"Available: {list(market_states.keys())}"
+            )
             
         ohlcv = m_state['ohlcv']
         current_price = m_state['current_price']

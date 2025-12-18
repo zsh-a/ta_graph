@@ -175,10 +175,32 @@ def execute_trade(state: AgentState) -> dict:
     """
     logger.info("🚀 Executing Trades...")
     execution_plans = state.get("execution_results", [])
+    decisions = state.get("decisions", [])
+    warnings = list(state.get("warnings", []))  # Get existing warnings or empty list
+    
+    # Track execution metadata
+    execution_metadata = {
+        "decisions_received": len(decisions),
+        "plans_received": len(execution_plans),
+        "trades_executed": 0
+    }
+    
+    # CRITICAL: Check if decisions were made but no execution plans created
+    if decisions and len([d for d in decisions if d.get("operation") != "Hold"]) > 0 and not execution_plans:
+        error_msg = (
+            f"🚨 CRITICAL: {len(decisions)} trade decision(s) made but NO execution plans created. "
+            f"This indicates a failure in the risk assessment or execution planning stage."
+        )
+        logger.critical(error_msg)
+        warnings.append(error_msg)
     
     if not execution_plans:
         logger.info("No execution plans to process.")
-        return {"execution_results": []}
+        return {
+            "execution_results": [],
+            "execution_metadata": execution_metadata,
+            "warnings": warnings
+        }
     
     results = []
     trading_mode = os.getenv("TRADING_MODE", "dry-run").lower()
@@ -260,6 +282,7 @@ def execute_trade(state: AgentState) -> dict:
                 # Save to database if successful
                 if result.success:
                     save_trade_to_database(plan, result)
+                    execution_metadata["trades_executed"] += 1
                 
             except Exception as e:
                 logger.error(f"Execution error: {e}")
@@ -281,8 +304,16 @@ def execute_trade(state: AgentState) -> dict:
                 executed_amount=amount
             )
             save_trade_to_database(plan, result)
+            execution_metadata["trades_executed"] += 1
         
         results.append(plan)
     
-    logger.info(f"\n✅ Execution complete: {len([r for r in results if r.get('execution_status') == 'FILLED'])} filled")
-    return {"execution_results": results}
+    filled_count = len([r for r in results if r.get('execution_status') == 'FILLED'])
+    logger.info(f"\n✅ Execution complete: {filled_count} filled")
+    logger.info(f"📊 Metadata: {execution_metadata}")
+    
+    return {
+        "execution_results": results,
+        "execution_metadata": execution_metadata,
+        "warnings": warnings
+    }

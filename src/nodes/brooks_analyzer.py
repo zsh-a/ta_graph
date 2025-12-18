@@ -18,6 +18,7 @@ from langfuse import observe
 from ..state import AgentState
 from ..logger import get_logger
 from ..utils.model_manager import get_llm
+from ..utils.timeout_decorator import with_timeout
 
 logger = get_logger(__name__)
 
@@ -281,9 +282,44 @@ def validate_brooks_analysis(
         "errors": errors
     }
 
+# ==================== Fallback Function ====================
+
+def brooks_fallback(state: AgentState) -> dict:
+    """
+    Fallback if Brooks analysis times out.
+    Returns conservative Hold recommendation.
+    """
+    logger.warning("⏱️ Brooks analysis timed out - using conservative fallback")
+    return {
+        "brooks_analysis": {
+            "market_cycle": "trading_range",
+            "always_in_direction": "neutral",
+            "setup_quality": 0,
+            "signal_bar": {
+                "bar_index": -1,
+                "quality_score": 0,
+                "bar_type": "doji",
+                "body_size_percent": 50.0,
+                "tail_ratio": 1.0,
+                "follow_through": False,
+                "closes_near": "mid"
+            },
+            "detected_patterns": [],
+            "buying_pressure": 5,
+            "selling_pressure": 5,
+            "context_summary": "Analysis timed out - no context available",
+            "ema20_relationship": "at",
+            "recommended_action": "wait",
+            "wait_reason": "Brooks analysis exceeded timeout - recommending HOLD for safety",
+            "_validation": {"valid": False, "errors": ["Timeout"], "warnings": ["Analysis did not complete"]}
+        },
+        "validation_result": {"valid": False, "errors": ["Timeout"], "warnings": []}
+    }
+
 # ==================== Node Function ====================
 
 @observe()
+@with_timeout(timeout_seconds=120, fallback_fn=brooks_fallback, operation_name="Brooks Analysis")
 def brooks_analyzer(state: AgentState) -> dict:
     """
     Brooks-specific price action analysis node.
