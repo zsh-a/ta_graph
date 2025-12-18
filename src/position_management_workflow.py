@@ -13,7 +13,6 @@ from .nodes.position_sync import sync_position_state, check_position_health
 from .nodes.followthrough_analyzer import analyze_followthrough
 from .nodes.risk_manager import manage_risk, check_stop_hit
 from .safety import get_equity_protector, ConvictionTracker, check_hallucination_guard
-from .monitoring import get_heartbeat_monitor
 from .logger import get_logger
 
 logger = get_logger(__name__)
@@ -91,10 +90,7 @@ def create_position_management_workflow() -> StateGraph:
     workflow.add_node("manage_risk", manage_risk)
     workflow.add_node("check_stop", check_stop_hit)
     
-    # 5. 心跳
-    workflow.add_node("heartbeat", record_heartbeat)
-    
-    # 6. 安全检查
+    # 5. 安全检查
     workflow.add_node("safety_check", perform_safety_check)
     
     # ========== 条件边：状态路由 ==========
@@ -119,10 +115,8 @@ def create_position_management_workflow() -> StateGraph:
     
     def route_after_stop_check(state: PositionManagementState) -> str:
         """止损检查后的路由"""
-        if state.get("should_exit") or state.get("status") != "managing_position":
-            return END
-        else:
-            return "heartbeat"  # 继续监控
+        # 持仓管理完成，返回主循环
+        return END
     
     # ========== 添加边 ==========
     
@@ -156,26 +150,11 @@ def create_position_management_workflow() -> StateGraph:
     workflow.add_edge("analyze_followthrough", "manage_risk")
     workflow.add_edge("manage_risk", "check_stop")
     
-    workflow.add_conditional_edges(
-        "check_stop",
-        route_after_stop_check,
-        {
-            "heartbeat": "heartbeat",
-            END: END
-        }
-    )
-    
-    # Heartbeat -> END (ready for next loop)
-    workflow.add_edge("heartbeat", END)
+    workflow.add_edge("check_stop", END)
     
     return workflow
 
 
-def record_heartbeat(state: PositionManagementState) -> PositionManagementState:
-    """记录心跳"""
-    heartbeat = get_heartbeat_monitor()
-    heartbeat.beat()
-    return state
 
 
 def perform_safety_check(state: PositionManagementState) -> PositionManagementState:
@@ -215,17 +194,13 @@ def example_usage():
     workflow = create_position_management_workflow()
     app = workflow.compile()
     
-    # 2. 启动心跳监控
-    heartbeat = get_heartbeat_monitor()
-    heartbeat.start()
-    
-    # 3. 初始化 Equity Protector
+    # 2. 初始化 Equity Protector
     equity_protector = get_equity_protector(
         max_daily_loss_pct=2.0,
         max_consecutive_losses=3
     )
     
-    # 4. 准备初始状态
+    # 3. 准备初始状态
     initial_state = {
         "symbol": "BTC/USDT",
         "exchange": "bitget",
@@ -255,18 +230,16 @@ def example_usage():
         "timeframe": 60
     }
     
-    # 5. 运行一次循环
+    # 4. 运行一次循环
     result = app.invoke(initial_state)
     
     logger.info(f"Workflow completed. Status: {result.get('status')}")
+    
     
     # 6. 如果交易结束，更新 Equity Protector
     if result.get("exit_reason"):
         pnl = result.get("exit_pnl", 0)
         equity_protector.update_trade_result(pnl, result["account_balance"])
-    
-    # 7. 停止心跳监控
-    heartbeat.stop()
 
 
 if __name__ == "__main__":

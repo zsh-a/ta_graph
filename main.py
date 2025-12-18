@@ -17,7 +17,7 @@ from src.config import load_config
 from src.supervisor_graph import build_trading_supervisor
 from src.enhanced_logging import setup_enhanced_logging, get_trade_logger, get_metrics_logger
 from src.dashboard import get_dashboard, start_dashboard_server
-from src.monitoring import get_heartbeat_monitor
+from src.utils.candle_timer import CandleTimer, ExchangeTimeSynchronizer, parse_timeframe_to_minutes
 from src.logger import get_logger
 
 logger = get_logger(__name__)
@@ -83,10 +83,48 @@ def main():
         start_dashboard_server(port=8000)
         logger.info("✓ Dashboard server started at http://localhost:8000")
     
-    # 心跳监控
-    heartbeat = get_heartbeat_monitor(interval_seconds=30, timeout_seconds=120)
-    heartbeat.start()
-    logger.info("✓ Heartbeat monitor started")
+    # 心跳监控已移除 - 依赖 LangGraph persistence 和 OS 级别的进程监控
+    
+    # K线时间管理器
+    import ccxt
+    
+    # 初始化交易所（用于时间同步）
+    exchange = ccxt.bitget({
+        'apiKey': os.getenv('BITGET_API_KEY', ''),
+        'secret': os.getenv('BITGET_SECRET', ''),
+        'password': os.getenv('BITGET_PASSWORD', ''),
+        'enableRateLimit': True,
+    })
+    
+    # 创建时间同步器
+    time_sync = ExchangeTimeSynchronizer(
+        exchange=exchange,
+        sync_interval_minutes=60  # 每小时同步一次
+    )
+    
+    # 初始时间同步
+    try:
+        sync_result = time_sync.sync_time()
+        logger.info(
+            f"🕐 Initial time sync: offset={sync_result['offset_ms']:.0f}ms, "
+            f"latency={sync_result['latency_ms']:.0f}ms"
+        )
+    except Exception as e:
+        logger.warning(f"⚠️  Time sync failed, using local time: {e}")
+        time_sync = None  # 降级到本地时间
+    
+    # 创建K线定时器
+    timeframe_minutes = parse_timeframe_to_minutes(config.timeframe.primary)
+    candle_timer = CandleTimer(
+        timeframe_minutes=timeframe_minutes,
+        time_sync=time_sync,
+        execution_buffer_ms=500  # 提前500ms唤醒
+    )
+    
+    logger.info(
+        f"🕐 Candle timer initialized: {timeframe_minutes}min candles, "
+        f"buffer=500ms"
+    )
     
     # ========== 3. 构建Supervisor Graph ==========
     
@@ -125,7 +163,7 @@ def main():
         initial_state = {
             "symbol": symbol,
             "exchange": config.exchange.name,
-            "timeframe": 60,  # TODO: 从config.timeframe.primary解析
+            "timeframe": timeframe_minutes,
             "status": "hunting",
             "account_balance": 10000.0,
             "position": None,
@@ -152,8 +190,15 @@ def main():
         
         try:
             while True:
+                # === 等待下一个K线收盘 ===
+                if tick_count > 0:  # 跳过第一次（启动时立即执行）
+                    timing_info = candle_timer.wait_until_next_candle()
+                    logger.info(
+                        f"🕐 Candle close: {timing_info['next_close'].strftime('%H:%M:%S')}, "
+                        f"Latency: {timing_info['latency_ms']:.0f}ms"
+                    )
+                
                 tick_count += 1
-                heartbeat.beat()
                 
                 logger.info(f"\n{'─'*70}")
                 logger.info(f"⚡ Tick #{tick_count} @ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
@@ -197,25 +242,22 @@ def main():
                             logger.warning(f"  - {err}")
                             dashboard.record_error(err)
                     
-                    # --- 决定休眠时间 ---
-                    # 有持仓：频繁检查（30秒）
-                    # 无持仓：正常间隔（60秒）
-                    # 冷却中：长时间休眠（120秒）
+                    # --- K线对齐模式 ---
+                    # 所有状态都在K线收盘时执行（由candle_timer控制）
+                    # 冷却模式可以跳过若干K线
                     
                     if current_status == "cooldown":
-                        sleep_time = 120
                         mode_emoji = "❄️"
                         mode_name = "COOLDOWN"
+                        # TODO: 可以实现跳过N个K线的逻辑
                     elif has_position or has_order:
-                        sleep_time = 30
                         mode_emoji = "📊"
                         mode_name = "MANAGING"
                     else:
-                        sleep_time = 60
                         mode_emoji = "🔍"
                         mode_name = "HUNTING"
                     
-                    logger.info(f"\n{mode_emoji} [{mode_name}] Tick complete. Sleeping {sleep_time}s...")
+                    logger.info(f"\n{mode_emoji} [{mode_name}] Tick complete.")
                     
                     # 定期保存仪表盘快照
                     if tick_count % 10 == 0:
@@ -224,8 +266,6 @@ def main():
                     # 定期打印仪表盘（可选）
                     if tick_count % 20 == 0:
                         dashboard.print_dashboard()
-                    
-                    time.sleep(sleep_time)
                     
                 except Exception as e:
                     logger.exception(f"❌ Tick failed: {e}")
@@ -250,8 +290,6 @@ def main():
             logger.info("\n" + "="*70)
             logger.info(" "*25 + "SHUTTING DOWN...")
             logger.info("="*70)
-            
-            heartbeat.stop()
             
             # 最终仪表盘
             dashboard.print_dashboard()
