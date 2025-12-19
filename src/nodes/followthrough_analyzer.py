@@ -5,66 +5,92 @@ Follow-through 分析节点 - Follow-through Analyzer
 "入场后的一两根 K 线决定了交易的质量"
 """
 
-from typing import Literal
+import os
+import base64
+from typing import Literal, Any
+from pydantic import BaseModel, Field
+from langchain_core.messages import HumanMessage
+from langfuse import observe
+
 from ..logger import get_logger
 from ..notification.alerts import notify_trade_event
+from ..utils.model_manager import get_llm
 
 logger = get_logger(__name__)
 
 
-# Follow-through Prompt for VL Model
-FOLLOWTHROUGH_PROMPT = """你是 Al Brooks 交易系统的持仓管理助手。
+# ==================== Pydantic Models ====================
 
-# 当前状态
-- 持仓方向: {side}
-- 入场价格: {entry_price}
-- 入场 Bar Index: {entry_bar_index}
-- 当前 Bar Index: {current_bar_index}
-- 止损位: {stop_loss}
-
-# 任务
-分析入场后的 Follow-through（跟随性）质量。Al Brooks 强调：入场后 1-2 根 K 线的表现最重要。
-
-## 评估标准
-
-### 强跟随 (Good Follow-through)
-- **做多**: 大阳线，实体饱满，收盘靠近高点，上影线短
-- **做空**: 大阴线，实体饱满，收盘靠近低点，下影线短
-- **建议**: Hold（持有）或 Add（加仓）
-
-### 失望 (Disappointment)
-- **做多后**: 出现十字星、阴线、或阳线实体很小
-- **做空后**: 出现十字星、阳线、或阴线实体很小
-- **特征**: K 线实体小，上下影线长，犹豫不决
-- **建议**: Tighten Stop（收紧止损）或 Exit at Market（市价离场）
-
-### 弱但可接受 (Weak but Acceptable)
-- 方向正确，但力度不强
-- **建议**: Hold（持有），保持观察
-
-## 输出格式（JSON）
-{{
-  "follow_through_quality": "strong" | "weak" | "disappointing",
-  "recommendation": "hold" | "exit_market" | "tighten_stop" | "add_position",
-  "reasoning": "详细描述 K 线形态和市场反馈...",
-  "confidence": 0.0-1.0,
-  "key_observations": ["观察1", "观察2", ...]
-}}
-
-请基于图表进行分析。"""
+class FollowThroughAnalysis(BaseModel):
+    """Structured output for follow-through analysis"""
+    follow_through_quality: Literal["strong", "weak", "disappointing"]
+    recommendation: Literal["hold", "exit_market", "tighten_stop", "add_position"]
+    reasoning: str = Field(description="Detailed description of bar structure and market feedback")
+    confidence: float = Field(ge=0.0, le=1.0, description="Confidence level 0.0-1.0")
+    key_observations: list[str] = Field(description="List of key observations from the chart")
 
 
+# ==================== Prompts ====================
+
+def get_followthrough_prompt(
+    side: str,
+    entry_price: float,
+    entry_bar_index: int,
+    current_bar_index: int,
+    stop_loss: float
+) -> str:
+    """Generate follow-through analysis prompt for VL model"""
+    return f"""You are a position management assistant for the Al Brooks trading system.
+
+# Current State
+- Position Side: {side}
+- Entry Price: {entry_price}
+- Entry Bar Index: {entry_bar_index}
+- Current Bar Index: {current_bar_index}
+- Stop Loss: {stop_loss}
+
+# Task
+Analyze the quality of follow-through after entry. Al Brooks emphasizes: The performance of 1-2 bars after entry is most important.
+
+## Evaluation Criteria
+
+### Strong Follow-through (Good Follow-through)
+- **For Long**: Large bullish bar with full body, close near high, short upper shadow
+- **For Short**: Large bearish bar with full body, close near low, short lower shadow
+- **Recommendation**: Hold or Add (add to position)
+
+### Disappointment
+- **After Long Entry**: Doji, bearish bar, or bullish bar with very small body
+- **After Short Entry**: Doji, bullish bar, or bearish bar with very small body
+- **Characteristics**: Small bar body, long upper/lower shadows, indecision
+- **Recommendation**: Tighten Stop or Exit at Market
+
+### Weak but Acceptable
+- Correct direction but weak momentum
+- **Recommendation**: Hold, continue monitoring
+
+## Visual Analysis Instructions
+- Focus on the bars AFTER the entry point (bar index {entry_bar_index})
+- Currently analyzing bar index {current_bar_index} (bar {current_bar_index - entry_bar_index} after entry)
+- Look at: Bar shapes, body size, tail length, close position, continuation from previous bar
+- Compare the follow-through bar(s) to the entry bar
+
+Return ONLY valid JSON matching the FollowThroughAnalysis schema.
+"""
+
+
+@observe()
 def analyze_followthrough(state: dict) -> dict:
     """
-    分析 Follow-through 并决定持仓策略
+    Analyze follow-through and decide on position strategy
     
-    Brooks 原则：只关注入场后的 1-2 根 K 线
+    Brooks Principle: Focus only on the performance of 1-2 bars after entry
     
     Args:
-        state: 当前 Agent 状态
+        state: Current Agent state
         
     Returns:
-        更新后的状态
+        Updated state
     """
     if state.get("status") != "managing_position":
         return state
@@ -75,10 +101,10 @@ def analyze_followthrough(state: dict) -> dict:
     if entry_bar_index is None or current_bar_index is None:
         return state
     
-    # 计算入场后经过了几根 K 线
+    # Calculate number of bars since entry
     bars_since_entry = current_bar_index - entry_bar_index
     
-    # Brooks: 只在入场后的 1-2 根 K 线做 Follow-through 检查
+    # Brooks: Only check follow-through on the 1-2 bars after entry
     if bars_since_entry > 2:
         logger.debug("Beyond follow-through window (>2 bars). Skipping analysis.")
         return state
@@ -89,13 +115,24 @@ def analyze_followthrough(state: dict) -> dict:
     
     logger.info(f"📊 Analyzing Follow-through: Bar {bars_since_entry} after entry")
     
-    # 准备图表数据
+    # Get position info
     position = state.get("position", {})
     
-    # 调用 VL 模型分析（这里先用简化版本）
-    analysis = analyze_followthrough_simple(state)
+    # Get chart image path
+    chart_image_path = state.get("chart_image_path")
     
-    # 根据分析结果采取行动
+    # Use VL model if chart is available, otherwise use simplified analysis
+    if chart_image_path and os.path.exists(chart_image_path):
+        try:
+            analysis = analyze_followthrough_with_vl(state, chart_image_path)
+        except Exception as e:
+            logger.error(f"VL model analysis failed: {e}. Falling back to simple analysis.")
+            analysis = analyze_followthrough_simple(state)
+    else:
+        logger.warning("No chart image available. Using simplified OHLC analysis.")
+        analysis = analyze_followthrough_simple(state)
+    
+    # Take action based on analysis results
     if analysis["recommendation"] == "exit_market":
         if analysis["confidence"] > 0.7:
             logger.warning(
@@ -103,18 +140,18 @@ def analyze_followthrough(state: dict) -> dict:
                 f"Confidence: {analysis['confidence']:.2f}. Exiting at market."
             )
             
-            # 记录退出原因
+            # Record exit reason
             state["exit_reason"] = "disappointing_followthrough"
             state["followthrough_analysis"] = analysis
             
-            # 实际的平仓操作会在 risk_manager 中处理
-            # 这里只更新状态标记
+            # Actual close will be handled in risk_manager
+            # Here we just set the flag
             state["should_exit"] = True
     
     elif analysis["recommendation"] == "tighten_stop":
         logger.info("🔒 Weak follow-through. Tightening stop loss.")
         
-        # 计算更紧的止损
+        # Calculate tighter stop
         new_stop = calculate_tighter_stop(state)
         if new_stop:
             state["stop_loss"] = new_stop
@@ -123,10 +160,10 @@ def analyze_followthrough(state: dict) -> dict:
     elif analysis["recommendation"] == "add_position":
         if analysis["confidence"] > 0.8:
             logger.info("💪 Strong follow-through! Consider adding position.")
-            # 加仓逻辑可以在这里实现
+            # Position adding logic can be implemented here
             state["add_signal"] = True
     
-    # 保存分析结果
+    # Save analysis results
     state["last_followthrough_analysis"] = analysis
     state["followthrough_checked"] = True
     
@@ -300,43 +337,60 @@ def calculate_tighter_stop(state: dict) -> float | None:
     return None
 
 
-def integrate_vl_model_analysis(state: dict, chart_image: bytes) -> dict:
+def analyze_followthrough_with_vl(
+    state: dict,
+    chart_image_path: str
+) -> dict:
     """
-    集成 VL 模型进行 Follow-through 分析
-    
-    TODO: 实现真实的 VL 模型调用
+    Use VL model to analyze follow-through quality
     
     Args:
-        state: 当前状态
-        chart_image: 图表截图
+        state: Current state
+        chart_image_path: Path to chart image
         
     Returns:
-        VL 模型的分析结果
+        Analysis result as dict
     """
-    # 这里是占位符，实际应该调用 VL 模型
-    # 例如使用 Qwen-VL 或 GPT-4V
-    
     position = state.get("position", {})
     
-    prompt = FOLLOWTHROUGH_PROMPT.format(
-        side=position.get("side", "N/A"),
+    # Build prompt
+    prompt_text = get_followthrough_prompt(
+        side=position.get("side", "long"),
         entry_price=position.get("entry_price", 0),
         entry_bar_index=state.get("entry_bar_index", 0),
         current_bar_index=state.get("current_bar_index", 0),
-        stop_loss=state.get("stop_loss", "N/A")
+        stop_loss=state.get("stop_loss", 0)
     )
     
-    # TODO: 实际的 VL 模型调用
-    # response = vl_model.chat(
-    #     messages=[
-    #         {"role": "user", "content": [
-    #             {"type": "text", "text": prompt},
-    #             {"type": "image", "image": chart_image}
-    #         ]}
-    #     ]
-    # )
-    # 
-    # return parse_json(response.message.content)
+    # Encode image to base64
+    with open(chart_image_path, "rb") as image_file:
+        image_base64 = base64.b64encode(image_file.read()).decode('utf-8')
     
-    # 暂时返回简化分析
-    return analyze_followthrough_simple(state)
+    # Create message with image
+    content_parts: Any = [
+        {"type": "text", "text": prompt_text},
+        {
+            "type": "image_url",
+            "image_url": {
+                "url": f"data:image/png;base64,{image_base64}",
+            }
+        }
+    ]
+    
+    messages = [HumanMessage(content=content_parts)]
+    
+    # Get LLM with structured output
+    llm = get_llm()
+    structured_llm = llm.with_structured_output(FollowThroughAnalysis)
+    
+    # Invoke VL model
+    analysis = structured_llm.invoke(messages)
+    
+    if not analysis:
+        logger.error("VL model returned None for follow-through analysis")
+        raise ValueError("VL model analysis failed")
+    
+    # Convert to dict - handle both dict and Pydantic model
+    if isinstance(analysis, dict):
+        return analysis
+    return analysis.model_dump()
