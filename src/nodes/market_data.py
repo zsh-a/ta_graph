@@ -7,6 +7,7 @@ import datetime
 from typing import List, Dict, Any, Optional
 from langfuse import observe
 from ..state import AgentState
+from ..utils.event_bus import get_event_bus
 from ..logger import get_logger
 from ..utils.timeframe_config import get_data_limit
 from ..utils.brooks_chart import save_brooks_chart  # Use Brooks chart renderer
@@ -71,6 +72,8 @@ def fetch_market_data(state: AgentState) -> dict:
     Populates 'market_states' list for the strategy node.
     """
     logger.info("Fetching market data...")
+    bus = get_event_bus()
+    bus.emit_sync("node_start", {"node": "market_data"})
     symbol = state.get("symbol", "BTC/USDT")
     interval = state.get("primary_timeframe", "15m")
     
@@ -152,6 +155,13 @@ def fetch_market_data(state: AgentState) -> dict:
         for row in ohlcv
     ]
     
+    bus.emit_sync("market_update", {
+        "symbol": symbol,
+        "price": float(current_price),
+        "time": int(df.index[-1].timestamp()),
+        "timeframe": timeframe
+    })
+
     return {
         "market_data": market_data_dict,
         "market_states": [market_data_dict],  # List format for consistency

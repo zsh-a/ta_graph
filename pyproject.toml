@@ -17,4 +17,7 @@ dependencies = [
     "loguru>=0.7.2",
     "langgraph-checkpoint-sqlite>=3.0.1",
     "sqlalchemy>=2.0.45",
+    "fastapi>=0.125.0",
+    "uvicorn>=0.38.0",
+    "websockets>=15.0.1",
 ]

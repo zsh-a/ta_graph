@@ -9,16 +9,16 @@ Implements Al Brooks-specific price action analysis including:
 
 import os
 import base64
-import json
-from typing import List, Optional, Literal, Dict, Any
+from typing import List, Dict, Optional, Any, Literal, cast
 from pydantic import BaseModel, Field
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage
 from langfuse import observe
 
 from ..state import AgentState
 from ..logger import get_logger
 from ..utils.model_manager import get_llm
 from ..utils.timeout_decorator import with_timeout
+from ..utils.event_bus import get_event_bus
 
 logger = get_logger(__name__)
 
@@ -331,6 +331,8 @@ def brooks_analyzer(state: AgentState) -> dict:
         Dict with 'brooks_analysis' and 'validation_result' keys
     """
     logger.info("Running Brooks Analyzer...")
+    bus = get_event_bus()
+    bus.emit_sync("node_start", {"node": "brooks_analyzer"})
     
     # Extract data from state with fallback logic
     chart_path = state.get("chart_image_path")
@@ -380,6 +382,8 @@ HTF Signal: {htf_analysis.get('signal', 'Unknown')}
         htf_summary=htf_summary
     )
     
+    bus.emit_sync("ai_thinking", {"node": "brooks_analyzer", "step": "analyzing_chart", "message": "Analyzing price action with Brooks methodology..."})
+    
     # Create messages with images
     messages = create_brooks_messages(
         prompt_text=prompt_text,
@@ -426,6 +430,8 @@ HTF Signal: {htf_analysis.get('signal', 'Unknown')}
         
         # Add validation metadata
         analysis_dict['_validation'] = validation_result
+        
+        bus.emit_sync("analysis_complete", {"node": "brooks_analyzer", "analysis": analysis_dict})
         
         logger.info(f"Brooks Analysis Complete: {brooks_analysis.market_cycle} | Always In: {brooks_analysis.always_in_direction} | Setup Quality: {brooks_analysis.setup_quality}/10")
         

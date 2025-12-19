@@ -73,6 +73,21 @@ services:
     networks:
       - trading_network
 
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        - VITE_WS_URL=${VITE_WS_URL:-ws://127.0.0.1:8000/ws}
+    container_name: ta_graph_frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-3000}:80"
+    depends_on:
+      - trading-system
+    networks:
+      - trading_network
+
 networks:
   trading_network:
     driver: bridge

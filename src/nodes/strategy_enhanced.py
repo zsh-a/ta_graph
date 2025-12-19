@@ -19,6 +19,8 @@ from ..utils.model_manager import get_llm
 from ..utils.trade_filters import get_trade_filter
 from ..nodes.brooks_analyzer import create_hold_decision, should_force_hold
 from ..utils.timeout_decorator import with_timeout
+from ..utils.event_bus import get_event_bus
+import asyncio
 
 load_dotenv()
 logger = get_logger(__name__)
@@ -132,6 +134,8 @@ def generate_strategy(state: AgentState) -> dict:
     4. Return decision (potentially overridden to Hold)
     """
     logger.info("Generating Strategy (Enhanced with Brooks)...")
+    bus = get_event_bus()
+    bus.emit_sync("node_start", {"node": "strategy"})
     
     # ========== Extract Context ==========
     
@@ -162,6 +166,7 @@ def generate_strategy(state: AgentState) -> dict:
         if force_hold:
             logger.info(f"Brooks analysis forces HOLD: {hold_reason}")
             hold_decision = create_hold_decision(hold_reason, brooks_analysis)
+            bus.emit_sync("strategy_complete", {"node": "strategy", "decision": hold_decision, "forced": True})
             return {"decisions": [hold_decision]}
     
     # ========== Build Dynamic Prompt ==========
@@ -255,6 +260,7 @@ IMPORTANT: Respect the Brooks analysis. If it says "wait", you should strongly c
         # ========== Decision Passed All Checks ==========
         
         logger.info(f"Generated {decision.operation} decision (passed all filters)")
+        bus.emit_sync("strategy_complete", {"node": "strategy", "decision": decision_dict})
         return {"decisions": [decision_dict]}
         
     except Exception as e:

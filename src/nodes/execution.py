@@ -14,10 +14,11 @@ from ..logger import get_logger
 from ..database import get_session, ModelType, OperationType, SymbolType
 from ..database.trading_history import create_trading_record
 
-logger = get_logger(__name__)
-
-# Import unified exchange client
 from ..trading.exchange_client import get_client, ExchangeClient
+from ..utils.event_bus import get_event_bus
+
+logger = get_logger(__name__)
+bus = get_event_bus()
 
 
 class TradeResult:
@@ -164,15 +165,8 @@ def save_trade_to_database(
 
 @observe()
 def execute_trade(state: AgentState) -> dict:
-    """
-    Execute trades based on approved execution plans from risk node
-    
-    Supports:
-    - Real execution via CCXT
-    - Simulation mode
-    - Order management (SL/TP)
-    - Database persistence
-    """
+    """Execute Trade"""
+    bus.emit_sync("node_start", {"node": "execution"})
     logger.info("🚀 Executing Trades...")
     execution_plans = state.get("execution_results", [])
     decisions = state.get("decisions", [])

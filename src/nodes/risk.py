@@ -3,9 +3,11 @@ import os
 from langfuse import observe
 from ..state import AgentState
 from ..logger import get_logger
+from ..utils.event_bus import get_event_bus
 from ..utils.price_calculator import calculate_entry_price, calculate_stop_loss_price, calculate_take_profit_price
 
 logger = get_logger(__name__)
+bus = get_event_bus()
 
 # ========== Helpers ==========
 
@@ -25,14 +27,8 @@ class RiskConfig:
 
 @observe()
 def assess_risk(state: AgentState) -> dict:
-    """
-    Risk Node:
-    - Validates decisions
-    - Calculates exact prices
-    - Calculates position sizing
-    - Checks account-level risk limits
-    - Integrates with database for real account info
-    """
+    """Assess Risk"""
+    bus.emit_sync("node_start", {"node": "risk"})
     logger.info("Assessing Risk...")
     decisions = state.get("decisions", [])
     

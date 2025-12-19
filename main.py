@@ -298,10 +298,6 @@ def main():
             logger.info(" "*25 + "SHUTTING DOWN...")
             logger.info("="*70)
             
-            # 最终仪表盘
-            dashboard.print_dashboard()
-            dashboard.save_snapshot()
-            
             logger.info(f"\nTotal Ticks: {tick_count}")
             logger.info("State saved to DB. Next run will resume from here.")
             logger.info("\n✅ SHUTDOWN COMPLETE\n")
