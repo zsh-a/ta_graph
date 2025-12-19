@@ -50,6 +50,29 @@ case "$1" in
     start)
         print_info "Starting trading system..."
         check_env_file
+        
+        # Export USER_ID and GROUP_ID for docker-compose (UID is readonly in bash)
+        export USER_ID=$(id -u)
+        export GROUP_ID=$(id -g)
+        
+        # Create necessary directories with correct permissions if they don't exist
+        print_info "Creating directories with correct permissions..."
+        mkdir -p data logs charts checkpoints
+        
+        # Fix permissions on existing directories (in case they were created as root)
+        if [ -d "charts" ] && [ "$(stat -c '%U' charts)" = "root" ]; then
+            print_warning "Fixing permissions on charts directory..."
+            sudo chown -R $USER_ID:$GROUP_ID charts
+        fi
+        if [ -d "data" ] && [ "$(stat -c '%U' data)" = "root" ]; then
+            print_warning "Fixing permissions on data directory..."
+            sudo chown -R $USER_ID:$GROUP_ID data
+        fi
+        if [ -d "logs" ] && [ "$(stat -c '%U' logs)" = "root" ]; then
+            print_warning "Fixing permissions on logs directory..."
+            sudo chown -R $USER_ID:$GROUP_ID logs
+        fi
+        
         docker-compose up -d
         print_success "Trading system started"
         print_info "View logs with: $0 logs"
@@ -80,6 +103,8 @@ case "$1" in
     
     rebuild)
         print_info "Rebuilding and restarting..."
+        export USER_ID=$(id -u)
+        export GROUP_ID=$(id -g)
         docker-compose down
         docker-compose build --no-cache
         docker-compose up -d

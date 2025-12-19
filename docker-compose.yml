@@ -8,6 +8,9 @@ services:
     container_name: ta_graph_trading
     restart: unless-stopped
     
+    # Run as host user to avoid permission issues with volumes
+    user: "${USER_ID:-1000}:${GROUP_ID:-1000}"
+    
     environment:
       # Exchange API credentials
       - BITGET_API_KEY=${BITGET_API_KEY}
