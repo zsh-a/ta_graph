@@ -65,6 +65,8 @@ class Position:
     unrealized_pnl: float
     leverage: float
     margin_type: str  # "isolated" or "cross"
+    stop_loss: Optional[float] = None
+    take_profit: Optional[float] = None
 
 
 @dataclass

@@ -5,7 +5,7 @@
 """
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 from collections import deque
 import threading
@@ -50,6 +50,10 @@ class DashboardMetrics:
         self.error_count = 0
         self.last_error = None
 
+        # 累计指标
+        self.peak_pnl: float = 0.0
+        self.max_drawdown: float = 0.0
+
     def _emit_sync(self, event_type: str, data: Any):
         """同步发送事件 (直接使用 bus.emit_sync)"""
         self.bus.emit_sync(event_type, data)
@@ -67,10 +71,21 @@ class DashboardMetrics:
             self.losing_trades += 1
         
         self.total_pnl += pnl
+        
+        # 更新峰值和回撤
+        if self.total_pnl > self.peak_pnl:
+            self.peak_pnl = self.total_pnl
+        
+        drawdown = self.peak_pnl - self.total_pnl
+        if drawdown > self.max_drawdown:
+            self.max_drawdown = drawdown
+
         entry = {
             "timestamp": datetime.now().isoformat(),
             "pnl": pnl,
-            "cumulative_pnl": self.total_pnl
+            "cumulative_pnl": self.total_pnl,
+            "peak_pnl": self.peak_pnl,
+            "max_drawdown": self.max_drawdown
         }
         self.pnl_history.append(entry)
         self._emit_sync("trade_update", entry)
@@ -118,6 +133,9 @@ class DashboardMetrics:
                 "winning_trades": self.winning_trades,
                 "losing_trades": self.losing_trades,
                 "total_pnl": round(self.total_pnl, 2),
+                "pnl_percentage": self._calculate_pnl_percentage(),
+                "max_drawdown": round(self.max_drawdown, 2),
+                "drawdown_percent": self._calculate_drawdown_percent(),
                 "current_position": self.current_position
             },
             "performance": {
@@ -131,6 +149,33 @@ class DashboardMetrics:
             },
             "history": list(self.event_history)
         }
+
+    def _calculate_pnl_percentage(self) -> float:
+        """从 account_manager 获取初始资金并计算收益率"""
+        try:
+            from .database.account_manager import get_account_manager
+            am = get_account_manager()
+            info = am.get_account_info()
+            # 简单估算：当前资金 / (当前资金 - 累计收益) - 1
+            # 更好的做法是记录 initial_balance
+            initial = info.total_balance - self.total_pnl
+            if initial > 0:
+                return round((self.total_pnl / initial) * 100, 2)
+        except Exception:
+            pass
+        return 0.0
+
+    def _calculate_drawdown_percent(self) -> float:
+        """计算百分比回撤"""
+        try:
+            from .database.account_manager import get_account_manager
+            am = get_account_manager()
+            info = am.get_account_info()
+            if info.total_balance > 0:
+                return round((self.max_drawdown / (info.total_balance + self.max_drawdown)) * 100, 2)
+        except Exception:
+            pass
+        return 0.0
 
 # 全局单例
 _dashboard = DashboardMetrics()
@@ -156,6 +201,46 @@ async def root():
 async def get_metrics():
     logger.info("📊 Metrics requested via REST API")
     return get_dashboard().get_dashboard_data()
+
+@app.get("/history/runs")
+async def get_history_runs(
+    start_date: str | None = None,
+    end_date: str | None = None,
+    symbol: str | None = None,
+    limit: int = 50
+):
+    """Fetch historical workflow runs."""
+    from .database.persistence_manager import get_persistence_manager
+    
+    start_dt = None
+    end_dt = None
+    
+    try:
+        if start_date:
+            start_dt = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
+        if end_date:
+            end_dt = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
+    except ValueError as e:
+        return {"error": f"Invalid date format: {e}"}
+
+    with get_persistence_manager() as pm:
+        runs = pm.get_runs(
+            start_date=start_dt,
+            end_date=end_dt,
+            symbol=symbol,
+            limit=limit
+        )
+    return {"runs": runs}
+
+@app.get("/history/runs/{run_id}")
+async def get_history_run_details(run_id: str):
+    """Fetch detailed data for a specific workflow run."""
+    from .database.persistence_manager import get_persistence_manager
+    with get_persistence_manager() as pm:
+        details = pm.get_run_details(run_id)
+    if not details:
+        return {"error": "Run not found", "id": run_id}
+    return details
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
@@ -224,6 +309,9 @@ async def startup_event():
 
     async def buffer_history(event):
         """Buffer event in memory and persist to database"""
+        if 'timestamp' not in event:
+            event['timestamp'] = datetime.now(timezone.utc).isoformat()
+        
         dashboard.event_history.append(event)
         
         # Persist to database for rehydration after restart

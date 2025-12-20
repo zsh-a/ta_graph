@@ -88,8 +88,21 @@ class AccountManager:
         
         # Mock data for dry-run
         self.mock_balance = 10000.0
-        self.mock_available = 9000.0
-        self.mock_positions: List[Dict] = []
+        self.mock_available = 10000.0
+        self.mock_positions: List[Dict] = [
+            {
+                "symbol": "BTC/USDT",
+                "side": "long",
+                "size": 0.5,
+                "entry_price": 65000.0,
+                "mark_price": 65500.0,
+                "unrealized_pnl": 250.0,
+                "leverage": 10.0,
+                "margin_type": "isolated",
+                "stop_loss": 64000.0,
+                "take_profit": 68000.0
+            }
+        ]
         self.mock_orders: List[Dict] = []
     
     def get_account_info(self) -> AccountInfo:
@@ -104,7 +117,7 @@ class AccountManager:
                 total_balance=self.mock_balance,
                 available_balance=self.mock_available,
                 used_margin=self.mock_balance - self.mock_available,
-                unrealized_pnl=0.0,
+                unrealized_pnl=sum(p.get("unrealized_pnl", 0.0) for p in self.mock_positions),
                 positions=self.mock_positions.copy(),
                 open_orders=self.mock_orders.copy()
             )
@@ -114,8 +127,7 @@ class AccountManager:
             balance_info = self.client.get_account_info()
             positions_list = self.client.get_positions()
             orders_list = self.client.get_open_orders()
-            
-            # Convert to dicts
+
             positions = [
                 {
                     "symbol": p.symbol,
@@ -125,11 +137,14 @@ class AccountManager:
                     "mark_price": p.mark_price,
                     "unrealized_pnl": p.unrealized_pnl,
                     "leverage": p.leverage,
-                    "margin_type": p.margin_type
+                    "margin_type": p.margin_type,
+                    "stop_loss": p.stop_loss,
+                    "take_profit": p.take_profit
                 }
                 for p in positions_list
             ]
             
+            # (Rest of get_account_info mapping remains but we override positions for now)
             orders = [
                 {
                     "id": o.id,

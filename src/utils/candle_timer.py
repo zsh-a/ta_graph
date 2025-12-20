@@ -211,16 +211,45 @@ class CandleTimer:
         """
         等待到K线收盘，带实时延迟监控
         
-        Returns:
-            同 sleep_until_next_candle
+        Note: 如果当前时间已经处于执行窗口（buffer内），则自动等待下一个周期，
+        避免在处理完成后立即再次触发同一个周期的Tick。
         """
-        result = self.sleep_until_next_candle()
+        now = self.get_current_time()
+        next_close = self.get_next_candle_close(now)
+        
+        # 如果距离收盘时间小于 buffer，说明我们刚处理完或者错过了
+        # 此时应该等待下一个周期的收盘
+        time_until_close = (next_close - now).total_seconds()
+        if time_until_close <= self.execution_buffer_seconds:
+            logger.debug(f"ℹ️ Already in execution window for {next_close.strftime('%H:%M:%S')}, waiting for next period.")
+            next_close = datetime.fromtimestamp(next_close.timestamp() + self.timeframe_seconds)
+        
+        # 使用指定的 next_close 进行睡眠
+        # 重构一部分 sleep_until_next_candle 的逻辑
+        time_until_target = (next_close - now).total_seconds()
+        sleep_duration = max(
+            0,
+            time_until_target - self.execution_buffer_seconds
+        )
+        
+        if sleep_duration > 0:
+            time.sleep(sleep_duration)
+            
+        wakeup_time = self.get_current_time()
+        latency_ms = (wakeup_time - next_close).total_seconds() * 1000
+        
+        result = {
+            "next_close": next_close,
+            "sleep_duration": sleep_duration,
+            "wakeup_time": wakeup_time,
+            "latency_ms": latency_ms
+        }
         
         # 如果延迟过大，记录警告
-        latency_ms = abs(result["latency_ms"])
-        if latency_ms > 2000:  # 超过2秒
+        abs_latency = abs(latency_ms)
+        if abs_latency > 2000:  # 超过2秒
             logger.warning(
-                f"⚠️  High latency: {latency_ms:.0f}ms "
+                f"⚠️  High latency: {abs_latency:.0f}ms "
                 f"(expected close: {result['next_close'].strftime('%H:%M:%S')}, "
                 f"actual wakeup: {result['wakeup_time'].strftime('%H:%M:%S')})"
             )

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Activity, LayoutDashboard, Brain, PieChart, ShieldAlert, Zap } from 'lucide-react';
+import { Activity, LayoutDashboard, Brain, PieChart, ShieldAlert, Zap, History as HistoryIcon } from 'lucide-react';
 import { useStore } from './store';
 
 interface SidebarItemProps {
@@ -69,6 +69,12 @@ export const AppLayout = ({ children }: { children: React.ReactNode }) => {
                         label="Safety & Logs"
                         active={currentView === 'safety'}
                         onClick={() => setView('safety')}
+                    />
+                    <SidebarItem
+                        icon={HistoryIcon}
+                        label="Full History"
+                        active={currentView === 'history'}
+                        onClick={() => setView('history')}
                     />
                 </nav>
 

@@ -341,6 +341,104 @@ class PersistenceManager:
         
         return result
 
+    def get_runs(
+        self, 
+        start_date: datetime | None = None, 
+        end_date: datetime | None = None, 
+        symbol: str | None = None,
+        limit: int = 100
+    ) -> list[dict]:
+        """Fetch historical workflow runs with filtering."""
+        query = self._db.query(WorkflowRun)
+        
+        if start_date:
+            query = query.filter(WorkflowRun.createdAt >= start_date)
+        if end_date:
+            query = query.filter(WorkflowRun.createdAt <= end_date)
+        if symbol:
+            query = query.filter(WorkflowRun.symbol == symbol)
+            
+        runs = query.order_by(WorkflowRun.createdAt.desc()).limit(limit).all()
+        
+        return [
+            {
+                "id": run.id,
+                "thread_id": run.threadId,
+                "symbol": run.symbol,
+                "timeframe": run.timeframe,
+                "status": run.status,
+                "created_at": run.createdAt.isoformat() if run.createdAt.tzinfo else run.createdAt.replace(tzinfo=timezone.utc).isoformat()
+            }
+            for run in runs
+        ]
+
+    def get_run_details(self, run_id: str) -> dict:
+        """Fetch all related data for a single workflow run."""
+        run = self._db.query(WorkflowRun).filter(WorkflowRun.id == run_id).first()
+        if not run:
+            return {}
+            
+        def to_iso(dt: datetime) -> str:
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.isoformat()
+
+        # Fetch all related records
+        observations = self._db.query(MarketObservation).filter(MarketObservation.runId == run_id).all()
+        analyses = self._db.query(AIAnalysis).filter(AIAnalysis.runId == run_id).all()
+        decisions = self._db.query(TradingDecision).filter(TradingDecision.runId == run_id).all()
+        executions = self._db.query(ExecutionRecord).filter(ExecutionRecord.runId == run_id).all()
+        
+        return {
+            "id": run.id,
+            "thread_id": run.threadId,
+            "symbol": run.symbol,
+            "timeframe": run.timeframe,
+            "status": run.status,
+            "created_at": to_iso(run.createdAt),
+            "observations": [
+                {
+                    "price": obs.price,
+                    "bar_data": obs.barData,
+                    "indicators": obs.indicators,
+                    "timestamp": to_iso(obs.timestamp)
+                } for obs in observations
+            ],
+            "analyses": [
+                {
+                    "node_name": ana.nodeName,
+                    "content": ana.content,
+                    "reasoning": ana.reasoning,
+                    "prompt": ana.prompt,
+                    "timestamp": to_iso(ana.createdAt)
+                } for ana in analyses
+            ],
+            "decisions": [
+                {
+                    "operation": dec.operation.value if hasattr(dec.operation, 'value') else dec.operation,
+                    "symbol": dec.symbol.value if hasattr(dec.symbol, 'value') else dec.symbol,
+                    "rationale": dec.rationale,
+                    "probability_score": dec.probabilityScore,
+                    "wait_reason": dec.waitReason,
+                    "entry_rules": dec.entryRules,
+                    "stop_loss_rules": dec.stopLossRules,
+                    "take_profit_rules": dec.takeProfitRules,
+                    "timestamp": to_iso(dec.createdAt)
+                } for dec in decisions
+            ],
+            "executions": [
+                {
+                    "side": exc.side,
+                    "symbol": exc.symbol,
+                    "status": exc.status,
+                    "executed_price": exc.executedPrice,
+                    "executed_amount": exc.executedAmount,
+                    "error": exc.error,
+                    "timestamp": to_iso(exc.createdAt)
+                } for exc in executions
+            ]
+        }
+
 # Helper function to get manager
 def get_persistence_manager(db: Session | None = None) -> PersistenceManager:
     return PersistenceManager(db)

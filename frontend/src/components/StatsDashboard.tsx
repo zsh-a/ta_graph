@@ -24,7 +24,7 @@ export const StatsDashboard = () => {
             <StatCard
                 label="Net Realized PnL"
                 value={`$${pnl.toFixed(2)}`}
-                subValue={isPositive ? '+2.4%' : '-1.2%'}
+                subValue={trading.pnl_percentage ? `${trading.pnl_percentage >= 0 ? '+' : ''}${trading.pnl_percentage.toFixed(2)}%` : '--'}
                 icon={DollarSign}
                 colorClass={isPositive ? 'text-primary' : 'text-destructive'}
             />
@@ -37,15 +37,15 @@ export const StatsDashboard = () => {
             />
             <StatCard
                 label="Drawdown"
-                value="0.45%"
-                subValue="Peak: $120"
+                value={`${trading.drawdown_percent ? trading.drawdown_percent.toFixed(2) : '0.00'}%`}
+                subValue={`Peak: $${trading.max_drawdown ? trading.max_drawdown.toFixed(2) : '0.00'}`}
                 icon={TrendingDown}
                 colorClass="text-accent"
             />
             <StatCard
                 label="Risk Guard"
-                value={safety.equity_protector.is_active ? "ENABLED" : "ACTIVE"}
-                subValue={`${safety.error_count} ERRS`}
+                value={safety.equity_protector?.is_active ? "ENABLED" : "ACTIVE"}
+                subValue={`${safety.error_count || 0} ERRS`}
                 icon={ShieldCheck}
                 colorClass="text-primary"
             />

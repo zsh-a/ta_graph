@@ -169,7 +169,7 @@ def main():
             "symbol": symbol,
             "exchange": config.exchange.name,
             "timeframe": timeframe_minutes,
-            "status": "hunting",
+            "status": "looking_for_trade",
             "account_balance": 10000.0,
             "position": None,
             "loop_count": 0,
@@ -223,7 +223,7 @@ def main():
                                 thread_id=thread_id,
                                 symbol=symbol,
                                 timeframe=config.timeframe.primary,
-                                status="hunting" # Default, nodes will update it
+                                status="looking_for_trade" # Default, nodes will update it
                             )
                             run_id = run.id
                             logger.info(f"💾 Created Persistence Run: {run_id}")

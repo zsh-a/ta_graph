@@ -16,7 +16,7 @@ class TradingState(TypedDict, total=False):
     """
     
     # ========== 核心状态 ==========
-    status: str  # 'hunting', 'order_pending', 'managing', 'cooldown', 'halted'
+    status: str  # 'looking_for_trade', 'order_pending', 'managing_position', 'cooldown', 'halted'
     loop_count: int
     last_update: str  # ISO格式时间戳
     run_id: Optional[str]  # Database run ID for persistence

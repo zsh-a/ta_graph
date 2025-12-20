@@ -18,6 +18,8 @@ from src.state import TradingState, AgentState
 from src.graph import create_graph
 from src.position_management_workflow import create_position_management_workflow
 from src.safety import get_equity_protector, ConvictionTracker
+from src.database.account_manager import get_account_manager
+from src.nodes.market_data import fetch_market_data
 from src.logger import get_logger
 
 logger = get_logger(__name__)
@@ -31,22 +33,39 @@ def init_node(state: TradingState) -> dict:
     """
     logger.info("🔧 Initializing trading system...")
     
+    # Sync with Account Manager
+    am = get_account_manager()
+    account_info = am.get_account_info()
+    
+    # Get current position for the symbol
+    current_position = next(
+        (p for p in account_info.positions if p['symbol'] == state.get("symbol")),
+        None
+    )
+    
     updates = {
         "loop_count": state.get("loop_count", 0),
         "last_update": datetime.now().isoformat(),
         "is_trading_enabled": True,
         "messages": state.get("messages", []) + ["System initialized"],
-        "errors": []
+        "errors": [],
+        "account_balance": account_info.total_balance,
+        "daily_pnl": state.get("daily_pnl", 0.0),
+        "position": current_position
     }
     
-    # 确保基本字段存在
-    if not state.get("status"):
-        updates["status"] = "hunting"
+    # Sync status with actual position/order state
+    current_status = state.get("status")
+    if current_position:
+        updates["status"] = "managing_position"
+    elif state.get("pending_order_id"):
+        updates["status"] = "order_pending"
+    elif current_status in [None, "hunting", "managing", "managing_position", "order_pending", "looking_for_trade"]:
+        # If no position/order, and currently in a "working" state (or old legacy state), 
+        # ensure it's set to looking_for_trade
+        updates["status"] = "looking_for_trade"
     
-    if not state.get("account_balance"):
-        updates["account_balance"] = 10000.0
-    
-    logger.info("✓ Initialization complete")
+    logger.info(f"✓ Initialization complete (Balance: ${account_info.total_balance:.2f}, Position: {'Yes' if current_position else 'No'})")
     return updates
 
 
@@ -101,10 +120,10 @@ def market_scanner_node(state: TradingState) -> dict:
         "symbol": state["symbol"],
         "primary_timeframe": f"{state.get('timeframe', 60)}m",
         "messages": [],
-        "positions": {},
+        "positions": {state["symbol"]: state.get("position")} if state.get("position") else {},
         "account_info": {
             "available_cash": state.get("account_balance", 10000.0),
-            "daily_pnl_percent": 0.0,
+            "daily_pnl_percent": state.get("daily_pnl", 0.0) / state.get("account_balance", 10000.0) * 100 if state.get("account_balance", 0) > 0 else 0.0,
             "open_orders": []
         },
         "run_id": state.get("run_id")
@@ -140,7 +159,7 @@ def market_scanner_node(state: TradingState) -> dict:
                 })
                 break
     else:
-        # 无交易信号，继续hunting
+        # 无交易信号，继续寻找
         updates["next_action"] = "scan"
     
     return updates
@@ -162,13 +181,25 @@ def position_manager_node(state: TradingState) -> dict:
     """
     logger.info("📊 MANAGING MODE: Managing position/order...")
     
+    # Ensure we have market data (bars, current_bar) for risk management
+    # scanner_node fetches it via analysis_graph, but manager_node needs to do it if skipped scanner
+    if not state.get("current_bar"):
+        logger.info("📥 Fetching fresh market data for management...")
+        # Prepare minimal AgentState for fetch_market_data
+        data_input = {
+            "symbol": state["symbol"],
+            "primary_timeframe": f"{state.get('timeframe', 60)}m",
+        }
+        # Call fetch_market_data node
+        data_result = fetch_market_data(data_input) # type: ignore
+        state = {**state, **data_result} # Update local state with fetched data
+    
     # 调用position management workflow
     try:
         pm_workflow = create_position_management_workflow().compile()
         
         # 准备输入（直接使用TradingState，两者兼容）
         pm_input = dict(state)
-        
         result = pm_workflow.invoke(pm_input)
         
         # 提取更新
@@ -186,7 +217,7 @@ def position_manager_node(state: TradingState) -> dict:
         
         # 检查是否退出了持仓
         if result.get("status") == "looking_for_trade":
-            logger.info("💤 Position closed. Returning to hunting mode.")
+            logger.info("💤 Position closed. Returning to looking_for_trade mode.")
             updates["next_action"] = "scan"
             
             # 记录PnL
@@ -226,7 +257,7 @@ def cooldown_node(state: TradingState) -> dict:
     if protector.can_trade():
         logger.info("✓ Cooldown period ended. Resuming trading.")
         return {
-            "status": "hunting",
+            "status": "looking_for_trade",
             "is_trading_enabled": True,
             "next_action": "scan",
             "messages": state.get("messages", []) + ["Cooldown ended, resuming"]

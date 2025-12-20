@@ -211,7 +211,7 @@ class WorkflowRun(Base):
     threadId = Column(String, index=True)  # Link to LangGraph thread_id
     symbol = Column(String, nullable=False, index=True)
     timeframe = Column(String, nullable=False)
-    status = Column(String, nullable=False)  # 'hunting', 'managing', etc.
+    status = Column(String, nullable=False)  # 'looking_for_trade', 'managing_position', etc.
     
     createdAt = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
     updatedAt = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))

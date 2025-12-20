@@ -6,6 +6,7 @@
 
 from typing import TypedDict
 from ..trading.exchange_client import get_client
+from ..database.account_manager import get_account_manager
 from ..logger import get_logger
 from ..notification.alerts import send_alert
 
@@ -15,30 +16,20 @@ logger = get_logger(__name__)
 def sync_position_state(state: dict) -> dict:
     """
     强制与交易所对账
-    
-    防止内存状态与交易所真实状态不一致的情况：
-    1. 系统认为有仓位，但交易所已平仓（爆仓/强平/网络错误）
-    2. 交易所有仓位，但系统不知道（极少见）
-    3. 仓位大小不一致
-    
-    Args:
-        state: 当前 Agent 状态
-        
-    Returns:
-        对账后的状态
     """
     try:
-        client = get_client(state.get("exchange", "bitget"))
         symbol = state.get("symbol")
-        
         if not symbol:
             logger.warning("No symbol in state, skipping sync")
             return state
         
-        # 从交易所获取真实持仓
-        real_positions = client.get_positions()
+        # 从 AccountManager 获取账户信息和持仓
+        am = get_account_manager()
+        account_info = am.get_account_info()
+        real_positions = account_info.positions
+        
         real_position = next(
-            (p for p in real_positions if p.symbol == symbol),
+            (p for p in real_positions if p['symbol'] == symbol),
             None
         )
         
@@ -49,25 +40,12 @@ def sync_position_state(state: dict) -> dict:
         if system_has_position and not exchange_has_position:
             logger.error(f"🚨 CRITICAL: Position missing on exchange for {symbol}!")
             
-            # 发送警报
             send_alert(
                 title="Position Desync - Missing on Exchange",
-                message=f"""
-                System Status: managing_position
-                Exchange Position: None
-                Symbol: {symbol}
-                
-                Possible reasons:
-                - Stop loss hit
-                - Liquidation
-                - Network error during exit
-                
-                Resetting system state to looking_for_trade.
-                """,
+                message=f"System Status: {state.get('status')}\nExchange Position: None\nSymbol: {symbol}\nResetting system state to looking_for_trade.",
                 severity="critical"
             )
             
-            # 强制重置状态
             return {
                 **state,
                 "status": "looking_for_trade",
@@ -84,26 +62,21 @@ def sync_position_state(state: dict) -> dict:
             
             send_alert(
                 title="Position Desync - Unexpected Position",
-                message=f"""
-                System Status: {state.get('status')}
-                Exchange Position: {real_position.side} {real_position.size}
-                Entry Price: {real_position.entry_price}
-                
-                Importing position to system state.
-                """,
+                message=f"System Status: {state.get('status')}\nExchange Position: Found\nSymbol: {symbol}\nImporting position to system state.",
                 severity="warning"
             )
             
-            # 导入持仓
             return {
                 **state,
                 "status": "managing_position",
                 "position": {
-                    "entry_price": real_position.entry_price,
-                    "size": real_position.size,
-                    "side": real_position.side,
-                    "unrealized_pnl": real_position.unrealized_pnl,
-                    "leverage": real_position.leverage
+                    "entry_price": real_position.get("entry_price"),
+                    "size": real_position.get("size"),
+                    "side": real_position.get("side"),
+                    "unrealized_pnl": real_position.get("unrealized_pnl"),
+                    "leverage": real_position.get("leverage"),
+                    "stop_loss": real_position.get("stop_loss"),
+                    "take_profit": real_position.get("take_profit")
                 },
                 "entry_bar_index": state.get("current_bar_index", 0),
                 "sync_imported": True
@@ -114,37 +87,25 @@ def sync_position_state(state: dict) -> dict:
             system_position = state.get("position", {})
             
             # 检查仓位大小
-            size_diff = abs(real_position.size - system_position.get("size", 0))
-            if size_diff > 0.0001:  # 允许小误差
-                logger.warning(
-                    f"Position size mismatch: "
-                    f"System={system_position.get('size')} vs Exchange={real_position.size}"
-                )
-                
-                # 更新为交易所的真实数据
-                state["position"]["size"] = real_position.size
-                state["position"]["unrealized_pnl"] = real_position.unrealized_pnl
+            size_diff = abs(real_position.get("size", 0) - system_position.get("size", 0))
+            if size_diff > 0.0001:
+                logger.warning(f"Position size mismatch for {symbol}")
+                state["position"]["size"] = real_position.get("size")
+                state["position"]["unrealized_pnl"] = real_position.get("unrealized_pnl")
             
-            # 检查入场价格（通常不应该变化）
-            price_diff = abs(real_position.entry_price - system_position.get("entry_price", 0))
+            # 检查入场价格
+            price_diff = abs(real_position.get("entry_price", 0) - system_position.get("entry_price", 0))
             if price_diff > 0.01:
-                logger.warning(
-                    f"Entry price mismatch: "
-                    f"System={system_position.get('entry_price')} vs Exchange={real_position.entry_price}"
-                )
-                # 这种情况很罕见，可能是部分平仓后的平均价格改变
-                state["position"]["entry_price"] = real_position.entry_price
+                logger.warning(f"Entry price mismatch for {symbol}")
+                state["position"]["entry_price"] = real_position.get("entry_price")
         
-        # 对账成功
         logger.debug(f"✅ Position sync complete for {symbol}")
         return state
     
     except Exception as e:
         logger.error(f"Error during position sync: {e}")
-        return {
-            **state,
-            "sync_error": str(e)
-        }
+        state["sync_error"] = str(e)
+        return state
 
 
 def check_position_health(state: dict) -> dict:
@@ -164,16 +125,13 @@ def check_position_health(state: dict) -> dict:
         if not position:
             return state
         
-        client = get_client(state.get("exchange", "bitget"))
-        
         # 获取账户信息
-        account = client.get_account_info()
+        am = get_account_manager()
+        account = am.get_account_info()
         
         # 检查保证金率
-        # 注意：不同交易所的保证金率计算方法不同
-        # 这里是简化版本
-        if account.used > 0:
-            margin_ratio = account.used / account.total
+        if account.used_margin > 0:
+            margin_ratio = account.used_margin / account.total_balance
             
             if margin_ratio > 0.8:  # 保证金率超过 80%
                 logger.warning(f"⚠️ High margin usage: {margin_ratio:.1%}")

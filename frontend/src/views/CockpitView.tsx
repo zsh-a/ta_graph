@@ -3,6 +3,7 @@ import { StatsDashboard } from '../components/StatsDashboard';
 import { PriceChart } from '../components/PriceChart';
 import { GraphView } from '../components/GraphView';
 import { AIBrainTerminal } from '../components/AIBrainTerminal';
+import { PositionDisplay } from '../components/PositionDisplay';
 import { LayoutGrid } from 'lucide-react';
 
 export const CockpitView: React.FC = () => {
@@ -22,7 +23,12 @@ export const CockpitView: React.FC = () => {
                         </div>
                     </div>
                 </div>
-                <AIBrainTerminal />
+                <div className="w-96 flex flex-col gap-2 h-full">
+                    <PositionDisplay />
+                    <div className="flex-1 min-h-0">
+                        <AIBrainTerminal />
+                    </div>
+                </div>
             </div>
         </>
     );

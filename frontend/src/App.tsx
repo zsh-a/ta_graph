@@ -10,6 +10,7 @@ import { ChartsView } from './views/ChartsView';
 import { ReasoningView } from './views/ReasoningView';
 import { PortfolioView } from './views/PortfolioView';
 import { SafetyView } from './views/SafetyView';
+import { HistoryView } from './views/HistoryView';
 
 /**
  * View mapping for the dashboard navigation.
@@ -21,6 +22,7 @@ const VIEW_MAP: Record<string, React.FC> = {
   reasoning: ReasoningView,
   portfolio: PortfolioView,
   safety: SafetyView,
+  history: HistoryView,
 };
 
 function App() {
