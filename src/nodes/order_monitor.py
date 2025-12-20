@@ -9,8 +9,10 @@ from datetime import datetime, timedelta
 from typing import TypedDict, Literal
 from ..trading.exchange_client import get_client
 from ..logger import get_logger
+from ..utils.event_bus import get_event_bus
 
 logger = get_logger(__name__)
+bus = get_event_bus()
 
 
 class AgentState(TypedDict):
@@ -72,6 +74,15 @@ def monitor_pending_order(state: AgentState) -> AgentState:
                 
                 client.cancel_order(order_id, state["symbol"])
                 
+                # Emit cancel event
+                bus.emit_sync("order_monitor_update", {
+                    "node": "order_monitor",
+                    "status": "CANCELED",
+                    "order_id": order_id,
+                    "symbol": state["symbol"],
+                    "reason": "Setup not triggered in time (Brooks principle)"
+                })
+                
                 return {
                     **state,
                     "status": "looking_for_trade",
@@ -92,6 +103,18 @@ def monitor_pending_order(state: AgentState) -> AgentState:
                 )
                 
                 if position:
+                    # Emit fill event
+                    bus.emit_sync("order_monitor_update", {
+                        "node": "order_monitor",
+                        "status": "FILLED",
+                        "order_id": order_id,
+                        "symbol": state["symbol"],
+                        "fill_price": position.entry_price,
+                        "size": position.size,
+                        "side": position.side,
+                        "message": "Order filled successfully"
+                    })
+                    
                     return {
                         **state,
                         "status": "managing_position",
@@ -124,6 +147,15 @@ def monitor_pending_order(state: AgentState) -> AgentState:
     
     # K 线未收盘，继续等待
     logger.debug(f"Order {order_id} still pending. Elapsed: {time_elapsed:.0f}/{timeframe_minutes} minutes")
+    
+    # Emit ping event to show monitoring is active
+    bus.emit_sync("order_monitor_ping", {
+        "node": "order_monitor",
+        "order_id": order_id,
+        "elapsed": f"{time_elapsed:.1f}m",
+        "status": "PENDING"
+    })
+    
     return state
 
 
@@ -152,6 +184,18 @@ def confirm_order_fill(state: AgentState) -> AgentState:
             )
             
             if position:
+                # Emit fill event
+                bus.emit_sync("order_monitor_update", {
+                    "node": "order_monitor",
+                    "status": "FILLED",
+                    "order_id": order_id,
+                    "symbol": state["symbol"],
+                    "fill_price": position.entry_price,
+                    "size": position.size,
+                    "side": position.side,
+                    "message": "Order filled (confirmed)"
+                })
+                
                 return {
                     **state,
                     "status": "managing_position",
@@ -169,6 +213,15 @@ def confirm_order_fill(state: AgentState) -> AgentState:
         
         elif order_status["status"] == "canceled":
             logger.warning(f"Order {order_id} was canceled")
+            
+            bus.emit_sync("order_monitor_update", {
+                "node": "order_monitor",
+                "status": "CANCELED",
+                "order_id": order_id,
+                "symbol": state["symbol"],
+                "reason": "Order canceled externaly"
+            })
+            
             return {
                 **state,
                 "status": "looking_for_trade",

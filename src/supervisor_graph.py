@@ -106,7 +106,8 @@ def market_scanner_node(state: TradingState) -> dict:
             "available_cash": state.get("account_balance", 10000.0),
             "daily_pnl_percent": 0.0,
             "open_orders": []
-        }
+        },
+        "run_id": state.get("run_id")
     }
     
     # 调用analysis graph

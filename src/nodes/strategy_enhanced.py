@@ -15,6 +15,8 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from ..state import AgentState
 from ..prompts import get_trading_system_prompt, get_user_prompt_parts, get_dynamic_trading_prompt
 from ..logger import get_logger
+from ..database import get_session, ModelType, OperationType, SymbolType, Chat
+from ..database.trading_history import create_trading_record
 from ..utils.model_manager import get_llm
 from ..utils.trade_filters import get_trade_filter
 from ..nodes.brooks_analyzer import create_hold_decision, should_force_hold
@@ -167,6 +169,40 @@ def generate_strategy(state: AgentState) -> dict:
             logger.info(f"Brooks analysis forces HOLD: {hold_reason}")
             hold_decision = create_hold_decision(hold_reason, brooks_analysis)
             bus.emit_sync("strategy_complete", {"node": "strategy", "decision": hold_decision, "forced": True})
+            
+            # IMPORTANT: Persist Hold decisions too!
+            run_id = state.get("run_id")
+            if run_id:
+                from ..database.persistence_manager import get_persistence_manager
+                try:
+                    with get_persistence_manager() as pm:
+                        pm.record_decision(
+                            run_id=str(run_id),
+                            operation="Hold",
+                            symbol=hold_decision.get("symbol", "BTC"),
+                            rationale=hold_reason,
+                            wait_reason=hold_reason
+                        )
+                        
+                        # Record minimal chat for Hold decision
+                        pm.record_chat(
+                            model=ModelType.Qwen,
+                            reasoning=hold_reason,
+                            user_prompt="Brooks analysis forced Hold",
+                            chat_content=json.dumps(hold_decision)
+                        )
+                        
+                        # Emit LLM log for frontend
+                        bus.emit_sync("llm_log", {
+                            "node": "strategy",
+                            "model": "Brooks Analyzer",
+                            "prompt": "Brooks analysis forced Hold",
+                            "response": json.dumps(hold_decision, indent=2),
+                            "reasoning": hold_reason
+                        })
+                except Exception as e:
+                    logger.warning(f"⚠️  Failed to persist Hold decision: {e}")
+            
             return {"decisions": [hold_decision]}
     
     # ========== Build Dynamic Prompt ==========
@@ -261,6 +297,55 @@ IMPORTANT: Respect the Brooks analysis. If it says "wait", you should strongly c
         
         logger.info(f"Generated {decision.operation} decision (passed all filters)")
         bus.emit_sync("strategy_complete", {"node": "strategy", "decision": decision_dict})
+        
+        # Persistence
+        run_id = state.get("run_id")
+        if run_id:
+            from ..database.persistence_manager import get_persistence_manager
+            try:
+                with get_persistence_manager() as pm:
+                    # Record detailed decision
+                    db_decision = pm.record_decision(
+                        run_id=str(run_id),
+                        operation=str(decision.operation),
+                        symbol=str(decision.symbol),
+                        rationale=decision.rationale,
+                        probability_score=decision.probability_score,
+                        entry_rules=decision.buy.model_dump() if decision.buy else (decision.sell.model_dump() if decision.sell else None),
+                        prediction=decision.prediction.model_dump() if decision.prediction else None
+                    )
+                    
+                    # Record analysis for tracking
+                    pm.record_analysis(
+                        run_id=str(run_id),
+                        node_name="strategy",
+                        content=decision_dict,
+                        reasoning=decision.rationale
+                    )
+                    
+                    # Record legacy chat for compatibility
+                    pm.record_chat(
+                        model=ModelType.Qwen, # Assuming default
+                        reasoning=decision.rationale,
+                        user_prompt=str(user_content_parts),
+                        chat_content=json.dumps(decision_dict)
+                    )
+                    
+                    # NEW: Emit detailed LLM log for frontend display
+                    bus.emit_sync("llm_log", {
+                        "node": "strategy",
+                        "model": "Qwen",
+                        "prompt": str(user_content_parts),
+                        "response": json.dumps(decision_dict, indent=2),
+                        "reasoning": decision.rationale
+                    })
+                    
+                    # Add decision_id to the state so execution can link to it
+                    decision_dict["id"] = db_decision.id
+                    
+            except Exception as e:
+                logger.warning(f"⚠️  Failed to record strategy persistence: {e}")
+
         return {"decisions": [decision_dict]}
         
     except Exception as e:

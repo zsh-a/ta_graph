@@ -1,5 +1,8 @@
 from typing import List, Dict, Any, Optional, Union, Literal
 import math
+from ..logger import get_logger
+
+logger = get_logger(__name__)
 
 # Use dicts or objects. Since data comes from CCXT ohlcv list, let's accept that.
 # OHLCV format: [timestamp, open, high, low, close, volume]
@@ -115,7 +118,8 @@ def calculate_stop_loss_price(
         
         slice_data = ohlcv[min_idx : max_idx+1]
         if not slice_data:
-             raise ValueError("Invalid swing range")
+             logger.warning(f"Empty slice_data for {rtype} in {symbol}. Range: {min_idx}:{max_idx+1}")
+             raise ValueError(f"Invalid {rtype} range: no data found in the specified bar range [{start}, {end}]")
 
         if rtype == 'swing_low':
             base_price = min(x[INDEX_LOW] for x in slice_data)
@@ -164,6 +168,9 @@ def calculate_take_profit_price(
         max_idx = min(len(ohlcv)-1, max(start_idx, end_idx))
         
         slice_data = ohlcv[min_idx : max_idx+1]
+        if not slice_data:
+             raise ValueError(f"Invalid measured move range: no data found in the specified bar range [{start}, {end}]")
+
         swing_high = max(x[INDEX_HIGH] for x in slice_data)
         swing_low = min(x[INDEX_LOW] for x in slice_data)
         impulse_height = swing_high - swing_low

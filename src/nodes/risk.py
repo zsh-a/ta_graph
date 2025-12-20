@@ -1,4 +1,4 @@
-from typing import List, Dict, Any, Optional
+from typing import Any
 import os
 from langfuse import observe
 from ..state import AgentState
@@ -16,6 +16,12 @@ def normalize_symbol(symbol: str) -> str:
     return symbol.split('/')[0].split(':')[0]
 
 class RiskConfig:
+    trading_mode: str
+    max_position_size_usdt: float
+    max_leverage: float
+    daily_loss_limit_percent: float
+    default_risk_percent: float
+
     def __init__(self):
         mode = os.getenv("TRADING_MODE", "dry-run").lower()
         self.trading_mode = "live" if mode == "live" else "dry-run"
@@ -26,7 +32,7 @@ class RiskConfig:
         self.default_risk_percent = 1.0
 
 @observe()
-def assess_risk(state: AgentState) -> dict:
+def assess_risk(state: AgentState) -> dict[str, Any]:
     """Assess Risk"""
     bus.emit_sync("node_start", {"node": "risk"})
     logger.info("Assessing Risk...")
@@ -203,5 +209,20 @@ def assess_risk(state: AgentState) -> dict:
         except Exception as e:
             logger.error(f"Error calculating details for {symbol}: {e}")
             continue
+
+    # Prepare summary statistics for frontend display
+    summary = {
+        "total_decisions": len(decisions) if decisions else 0,
+        "execution_plans": len(execution_plans),
+        "available_cash": available_cash,
+        "total_equity": total_equity,
+        "daily_pnl_percent": daily_pnl_percent
+    }
+    
+    bus.emit_sync("risk_assessment_complete", {
+        "node": "risk",
+        "execution_plans": execution_plans,
+        "summary": summary
+    })
 
     return {"execution_results": execution_plans}

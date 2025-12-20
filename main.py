@@ -18,6 +18,8 @@ from src.supervisor_graph import build_trading_supervisor
 from src.enhanced_logging import setup_enhanced_logging, get_trade_logger, get_metrics_logger
 from src.dashboard import get_dashboard, start_dashboard_server
 from src.utils.candle_timer import CandleTimer, ExchangeTimeSynchronizer, parse_timeframe_to_minutes
+from src.database.session import init_db
+from src.database.persistence_manager import get_persistence_manager
 from src.logger import get_logger
 
 logger = get_logger(__name__)
@@ -43,6 +45,9 @@ def main():
         print(f"❌ Configuration error: {e}")
         print("Please check your .env file and try again.")
         return
+    
+    # 初始化数据库
+    init_db()
     
     # ========== 2. 设置基础设施 ==========
     
@@ -210,9 +215,29 @@ def main():
                 try:
                     start_time = time.time()
                     
+                    # --- 1. 创建 Persistence Run ---
+                    run_id = None
+                    try:
+                        with get_persistence_manager() as pm:
+                            run = pm.create_run(
+                                thread_id=thread_id,
+                                symbol=symbol,
+                                timeframe=config.timeframe.primary,
+                                status="hunting" # Default, nodes will update it
+                            )
+                            run_id = run.id
+                            logger.info(f"💾 Created Persistence Run: {run_id}")
+                    except Exception as e:
+                        logger.warning(f"⚠️  Failed to create persistence run: {e}")
+
+                    # --- 2. 执行一次图运行 ---
                     # 传入空dict让图从DB恢复，或传入initial_state（首次）
+                    tick_input = {"run_id": run_id}
+                    if tick_count == 1:
+                        tick_input = {**initial_state, "run_id": run_id}
+
                     result = app.invoke(
-                        initial_state if tick_count == 1 else {},
+                        tick_input,
                         config=config_dict
                     )
                     

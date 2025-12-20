@@ -6,7 +6,7 @@ SQLAlchemy ORM models migrated from Super-nof1.ai Prisma schema
 from sqlalchemy import Column, String, Integer, Float, Boolean, DateTime, ForeignKey, JSON, Enum as SQLEnum, Index
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import uuid4
 import enum
 
@@ -73,8 +73,8 @@ class ModelAccount(Base):
     # Status
     isActive = Column(Boolean, default=True, index=True)
     
-    createdAt = Column(DateTime, default=datetime.utcnow)
-    updatedAt = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    createdAt = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updatedAt = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     
     # Relationships
     tradings = relationship("Trading", back_populates="modelAccount", cascade="all, delete-orphan")
@@ -93,8 +93,8 @@ class Chat(Base):
     reasoning = Column(String, nullable=False)
     userPrompt = Column(String, nullable=False)
     
-    createdAt = Column(DateTime, default=datetime.utcnow)
-    updatedAt = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    createdAt = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updatedAt = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     
     # Relationships
     tradings = relationship("Trading", back_populates="chat", cascade="all, delete-orphan")
@@ -120,8 +120,8 @@ class Trading(Base):
     # K-line prediction data (JSON format)
     prediction = Column(JSON, nullable=True)
     
-    createdAt = Column(DateTime, default=datetime.utcnow)
-    updatedAt = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    createdAt = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updatedAt = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     
     # Foreign keys
     chatId = Column(String, ForeignKey("Chat.id", ondelete="CASCADE"), nullable=True)
@@ -154,8 +154,8 @@ class TradingLesson(Base):
     marketConditions = Column(JSON, nullable=True)
     indicatorsAtEntry = Column(JSON, nullable=True)
     
-    createdAt = Column(DateTime, default=datetime.utcnow, index=True)
-    updatedAt = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    createdAt = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+    updatedAt = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     
     # Relationships
     trade = relationship("Trading", back_populates="lessons")
@@ -180,7 +180,7 @@ class ModelPerformanceSnapshot(Base):
     maxDrawdown = Column(Float, nullable=False)
     openPositions = Column(Integer, default=0)
     
-    snapshotDate = Column(DateTime, default=datetime.utcnow, index=True)
+    snapshotDate = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
     
     # Relationships
     modelAccount = relationship("ModelAccount", back_populates="performanceSnapshots")
@@ -197,5 +197,152 @@ class Metrics(Base):
     model = Column(SQLEnum(ModelType), nullable=False)
     metrics = Column(JSON, nullable=False)
     
-    createdAt = Column(DateTime, default=datetime.utcnow)
-    updatedAt = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    createdAt = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updatedAt = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+# Production-Grade Persistence Models
+
+class WorkflowRun(Base):
+    """
+    Master record for each LangGraph tick/workflow execution.
+    """
+    __tablename__ = "WorkflowRun"
+    
+    id = Column(String, primary_key=True, default=lambda: str(uuid4()))
+    threadId = Column(String, index=True)  # Link to LangGraph thread_id
+    symbol = Column(String, nullable=False, index=True)
+    timeframe = Column(String, nullable=False)
+    status = Column(String, nullable=False)  # 'hunting', 'managing', etc.
+    
+    createdAt = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+    updatedAt = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    
+    # Relationships
+    observations = relationship("MarketObservation", back_populates="run", cascade="all, delete-orphan")
+    analyses = relationship("AIAnalysis", back_populates="run", cascade="all, delete-orphan")
+    decisions = relationship("TradingDecision", back_populates="run", cascade="all, delete-orphan")
+    executions = relationship("ExecutionRecord", back_populates="run", cascade="all, delete-orphan")
+
+
+class MarketObservation(Base):
+    """
+    Detailed market state at the time of the workflow run.
+    """
+    __tablename__ = "MarketObservation"
+    
+    id = Column(String, primary_key=True, default=lambda: str(uuid4()))
+    runId = Column(String, ForeignKey("WorkflowRun.id", ondelete="CASCADE"), nullable=False, index=True)
+    
+    timestamp = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    price = Column(Float)
+    barData = Column(JSON)  # Current and recent OHLCV
+    indicators = Column(JSON)  # EMA, RSI, etc.
+    
+    # Relationships
+    run = relationship("WorkflowRun", back_populates="observations")
+
+
+class AIAnalysis(Base):
+    """
+    Structured analysis from AI agents (market analysis, Brooks analysis, etc.)
+    """
+    __tablename__ = "AIAnalysis"
+    
+    id = Column(String, primary_key=True, default=lambda: str(uuid4()))
+    runId = Column(String, ForeignKey("WorkflowRun.id", ondelete="CASCADE"), nullable=False, index=True)
+    
+    nodeName = Column(String, nullable=False, index=True)  # e.g., 'brooks_analyzer'
+    modelProvider = Column(String)  # e.g., 'OpenAI', 'ModelScope'
+    modelName = Column(String)  # e.g., 'gpt-4o', 'qwen-max'
+    
+    content = Column(JSON, nullable=False)  # The structured analysis result
+    rawResponse = Column(JSON)  # Original LLM output if available
+    reasoning = Column(String)  # Thinking process / Chain of thought
+    prompt = Column(String)  # User prompt sent to LLM
+    
+    tokenUsage = Column(JSON)  # Prompt, completion, total tokens
+    latencyMs = Column(Float)
+    
+    createdAt = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    
+    # Relationships
+    run = relationship("WorkflowRun", back_populates="analyses")
+
+
+class TradingDecision(Base):
+    """
+    Detailed trading decision including rationale and rules.
+    """
+    __tablename__ = "TradingDecision"
+    
+    id = Column(String, primary_key=True, default=lambda: str(uuid4()))
+    runId = Column(String, ForeignKey("WorkflowRun.id", ondelete="CASCADE"), nullable=False, index=True)
+    
+    operation = Column(SQLEnum(OperationType), nullable=False)
+    symbol = Column(SQLEnum(SymbolType), nullable=False)
+    
+    # Decision details
+    rationale = Column(String)
+    probabilityScore = Column(Float)
+    waitReason = Column(String)
+    
+    # Captured from Pydantic models in strategy node
+    entryRules = Column(JSON)
+    stopLossRules = Column(JSON)
+    takeProfitRules = Column(JSON)
+    prediction = Column(JSON)
+    
+    createdAt = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    
+    # Relationships
+    run = relationship("WorkflowRun", back_populates="decisions")
+    executions = relationship("ExecutionRecord", back_populates="decision")
+
+
+class ExecutionRecord(Base):
+    """
+    Link to actual exchange orders and fill details.
+    """
+    __tablename__ = "ExecutionRecord"
+    
+    id = Column(String, primary_key=True, default=lambda: str(uuid4()))
+    runId = Column(String, ForeignKey("WorkflowRun.id", ondelete="CASCADE"), nullable=False, index=True)
+    decisionId = Column(String, ForeignKey("TradingDecision.id", ondelete="CASCADE"), index=True)
+    
+    symbol = Column(String, nullable=False)
+    side = Column(String, nullable=False)  # BUY/SELL
+    orderId = Column(String, index=True)
+    clientOrderId = Column(String)
+    
+    status = Column(String)  # OPEN, FILLED, CANCELED, FAILED
+    executedPrice = Column(Float)
+    executedAmount = Column(Float)
+    fee = Column(Float)
+    error = Column(String)
+    
+    additionalData = Column(JSON)  # Any extra execution context
+    
+    createdAt = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updatedAt = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    
+    # Relationships
+    run = relationship("WorkflowRun", back_populates="executions")
+    decision = relationship("TradingDecision", back_populates="executions")
+
+
+class DashboardEvent(Base):
+    """
+    Dashboard events for frontend log persistence.
+    Stores all events that should be displayed in the AI Execution Log.
+    """
+    __tablename__ = "dashboard_events"
+    
+    id = Column(String, primary_key=True, default=lambda: str(uuid4()))
+    type = Column(String, nullable=False, index=True)  # e.g., 'node_start', 'analysis_complete', etc.
+    node = Column(String, nullable=True, index=True)  # Which node emitted this event
+    message = Column(String, nullable=True)  # Human-readable message
+    data = Column(JSON, nullable=True)  # Event payload
+    timestamp = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc), index=True)
+    
+    __table_args__ = (
+        Index('idx_dashboard_event_timestamp_type', 'timestamp', 'type'),
+    )

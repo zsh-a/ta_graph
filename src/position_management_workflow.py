@@ -54,6 +54,7 @@ class PositionManagementState(TypedDict):
     account_balance: float
     
     # 其他
+    run_id: str | None
     error: str | None
     exit_reason: str | None
 

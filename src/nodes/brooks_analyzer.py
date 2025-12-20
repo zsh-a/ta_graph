@@ -9,7 +9,8 @@ Implements Al Brooks-specific price action analysis including:
 
 import os
 import base64
-from typing import List, Dict, Optional, Any, Literal, cast
+import json
+from typing import Any, Literal, cast, Protocol, runtime_checkable
 from pydantic import BaseModel, Field
 from langchain_core.messages import HumanMessage
 from langfuse import observe
@@ -43,7 +44,7 @@ class BrooksPattern(BaseModel):
         "failed_breakout", "ttr"
     ]
     confidence: Literal["high", "medium", "low"]
-    bars_involved: List[int] = Field(description="Bar indices involved in pattern")
+    bars_involved: list[int] = Field(description="Bar indices involved in pattern")
     description: str
 
 class BrooksAnalysis(BaseModel):
@@ -60,7 +61,7 @@ class BrooksAnalysis(BaseModel):
     signal_bar: SignalBarQuality
     
     # Patterns
-    detected_patterns: List[BrooksPattern] = Field(default_factory=list)
+    detected_patterns: list[BrooksPattern] = Field(default_factory=list)
     
     # Pressure Analysis
     buying_pressure: int = Field(ge=0, le=10, description="0-10 scale")
@@ -72,7 +73,7 @@ class BrooksAnalysis(BaseModel):
     
     # Trading Guidance
     recommended_action: Literal["buy_setup", "sell_setup", "wait"]
-    wait_reason: Optional[str] = None
+    wait_reason: str | None = None
     setup_quality: int = Field(ge=0, le=10, description="Overall setup quality 0-10")
 
 # ==================== Prompts ====================
@@ -133,22 +134,36 @@ METHODOLOGY:
    - Look at: Close positions relative to range, tail sizes, bar overlaps
    - 8-10: Dominant pressure, 4-6: Balanced, 0-3: Weak pressure
 
-6. **EMA20 Relationship**:
-   - Strong Above: Price well above EMA, EMA sloping up sharply
-   - Above: Price above EMA but near it
-   - At: Price touching or crossing EMA
-   - Below/Strong Below: Opposite
-
-{htf_section}
+## Visual Markers:
+- **Bars**: Green = Bullish; Red = Bearish.
+- **Lines**: Blue = 20-period EMA.
+- **Zonal Shading**: Background alternates between light gray and white every 10 bars (e.g., "ZONE A", "ZONE B"). Use these to avoid "visual squeeze" and precisely group bars.
+- **Vertical Lines**: Very faint dotted gray lines for EVERY bar. Use these for pixel-perfect alignment.
+- **Signal Bar**: Highlighted with a yellow background area labeled "-1" at the bottom.
+- **Swing Points (Sx)**: Significant turning points labeled **S1, S2, S3...** in dark boxes.
+    - **Use these for Measured Moves!** E.g., "Leg 1 is S1-S2, projected from S3".
+- **Indices**: Numbers at the bottom (-20, -19... 0). 
+    - **Rotated**: Numbers are rotated 90 degrees to prevent overlap.
+    - **Z-Pattern**: Numbers alternate height (high/low) to stay clear.
 
 ## Bar Data (Primary Timeframe)
 {bar_data_table}
 
+- **Idx**: Bar index matching the bottom of the chart.
+- **Type**: Trend bar (large body) or Doji (small body/confusion).
+- **Body%**: Body size as percentage of total range.
+- **EMA Dist**: Distance to EMA20.
+- **H/L Count**: Brooks leg counting (H1/H2, L1/L2 logic).
+- **Swing**: Displays S1, S2... if this bar is a detected swing point.
+
 ## Visual Analysis Instructions
-- Focus on the LAST 20 bars (far right of chart)
+- **Context vs Detail**: You are provided with both a "Context Chart" (broad view) and a "Focus Chart" (zoomed view of the last 30 bars).
+- **Spatial Focus**: Pay strict attention to the **far right edge**.
 - Bar 0 = current incomplete bar (ignore for decisions)
 - Bar -1 = signal bar (most important for entry decisions)
-- Look at: Bar shapes, overlaps, tails, gaps, trend strength
+- Use the **Focus Chart** for precise candle-counting and body-sizing.
+- Use the **Context Chart** to identify major support/resistance, trend lines, and **Swing Points (Sx)** across the whole range.
+- **Measured Moves**: If you see a clear Spike (Leg 1), identify its start and end points using **Sx** labels (e.g., S1 to S2). Then project that height from a pullback point (e.g., S3) to find the Target.
 
 ## Output Requirements
 Return ONLY valid JSON matching the BrooksAnalysis schema.
@@ -162,8 +177,9 @@ CRITICAL:
 def create_brooks_messages(
     prompt_text: str,
     chart_image_path: str,
-    htf_chart_path: Optional[str] = None
-) -> List:
+    focus_chart_path: str | None = None,
+    htf_chart_path: str | None = None
+) -> list:
     """Create message list with text and image(s) for VL model"""
     
     def encode_image(path: str) -> str:
@@ -188,7 +204,7 @@ def create_brooks_messages(
             "text": "☝️ ABOVE: Higher Timeframe Chart (for context)"
         })
     
-    # Add primary timeframe chart
+    # Add Context chart (Primary)
     if os.path.exists(chart_image_path):
         primary_base64 = encode_image(chart_image_path)
         content_parts.append({
@@ -199,7 +215,21 @@ def create_brooks_messages(
         })
         content_parts.append({
             "type": "text",
-            "text": "☝️ ABOVE: Primary Timeframe Chart (main analysis)"
+            "text": "☝️ ABOVE: Context Chart (120 bars, broad view)"
+        })
+
+    # Add Focus chart (Detail)
+    if focus_chart_path and os.path.exists(focus_chart_path):
+        focus_base64 = encode_image(focus_chart_path)
+        content_parts.append({
+            "type": "image_url",
+            "image_url": {
+                "url": f"data:image/png;base64,{focus_base64}",
+            }
+        })
+        content_parts.append({
+            "type": "text",
+            "text": "☝️ ABOVE: Focus Chart (Zoomed-in view of the last 30 bars). Use this for precise calculations!"
         })
     
     return [HumanMessage(content=content_parts)]
@@ -208,9 +238,9 @@ def create_brooks_messages(
 
 def validate_brooks_analysis(
     analysis: BrooksAnalysis,
-    ohlcv_data: List[List[float]],
-    ema20_values: List[float]
-) -> Dict[str, Any]:
+    ohlcv_data: list[list[float]],
+    ema20_values: list[float]
+) -> dict[str, Any]:
     """
     Cross-check VL analysis against raw OHLC data to detect hallucinations.
     
@@ -336,17 +366,16 @@ def brooks_analyzer(state: AgentState) -> dict:
     
     # Extract data from state with fallback logic
     chart_path = state.get("chart_image_path")
+    focus_chart_path = state.get("focus_chart_image_path")
     
     # Debug: log what we got from state
-    logger.info(f"Chart path from state: {chart_path}")
+    logger.info(f"Chart paths from state: Context={chart_path}, Focus={focus_chart_path}")
     
     # Try to get from market_data if not in state directly
     market_data = state.get("market_data")
-    if not chart_path and market_data:
-        # market_data is a dict, not an object
-        if isinstance(market_data, dict):
-            chart_path = market_data.get('chart_image_path')
-            logger.info(f"Chart path from market_data dict: {chart_path}")
+    if isinstance(market_data, dict):
+        if not chart_path: chart_path = market_data.get('chart_image_path')
+        if not focus_chart_path: focus_chart_path = market_data.get('focus_chart_image_path')
     
     htf_chart_path = state.get("htf_chart_path")
     
@@ -388,6 +417,7 @@ HTF Signal: {htf_analysis.get('signal', 'Unknown')}
     messages = create_brooks_messages(
         prompt_text=prompt_text,
         chart_image_path=chart_path,
+        focus_chart_path=focus_chart_path,
         htf_chart_path=htf_chart_path
     )
     
@@ -433,6 +463,30 @@ HTF Signal: {htf_analysis.get('signal', 'Unknown')}
         
         bus.emit_sync("analysis_complete", {"node": "brooks_analyzer", "analysis": analysis_dict})
         
+        # NEW: Emit LLM log for frontend display (similar to strategy node)
+        bus.emit_sync("llm_log", {
+            "node": "brooks_analyzer",
+            "model": "VL Model (Brooks Analysis)",
+            "prompt": prompt_text,
+            "response": json.dumps(analysis_dict, indent=2),
+            "reasoning": analysis_dict.get("context_summary", "")
+        })
+        
+        # Persistence
+        run_id = state.get("run_id")
+        if run_id:
+            from ..database.persistence_manager import get_persistence_manager
+            try:
+                with get_persistence_manager() as pm:
+                    pm.record_analysis(
+                        run_id=run_id,
+                        node_name="brooks_analyzer",
+                        content=analysis_dict,
+                        reasoning=analysis_dict.get("context_summary", "")
+                    )
+            except Exception as e:
+                logger.warning(f"⚠️  Failed to record Brooks analysis: {e}")
+
         logger.info(f"Brooks Analysis Complete: {brooks_analysis.market_cycle} | Always In: {brooks_analysis.always_in_direction} | Setup Quality: {brooks_analysis.setup_quality}/10")
         
         return {
@@ -449,7 +503,7 @@ HTF Signal: {htf_analysis.get('signal', 'Unknown')}
 
 # ==================== Helper Functions ====================
 
-def create_hold_decision(wait_reason: str, brooks_analysis: Optional[Dict] = None) -> Dict:
+def create_hold_decision(wait_reason: str, brooks_analysis: dict | None = None) -> dict:
     """Create a Hold decision with Brooks context"""
     return {
         "operation": "Hold",
@@ -468,7 +522,7 @@ def create_hold_decision(wait_reason: str, brooks_analysis: Optional[Dict] = Non
         }
     }
 
-def should_force_hold(brooks_analysis: Dict) -> tuple[bool, str]:
+def should_force_hold(brooks_analysis: dict) -> tuple[bool, str]:
     """
     Determine if Brooks analysis mandates a Hold decision.
     

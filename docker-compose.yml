@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   trading-system:
     build:
@@ -11,30 +9,30 @@ services:
     # Run as host user to avoid permission issues with volumes
     user: "${USER_ID:-1000}:${GROUP_ID:-1000}"
     
-    environment:
-      # Exchange API credentials
-      - BITGET_API_KEY=${BITGET_API_KEY}
-      - BITGET_SECRET=${BITGET_SECRET}
-      - BITGET_PASSWORD=${BITGET_PASSWORD}
+    # environment:
+    #   # Exchange API credentials
+    #   - BITGET_API_KEY=${BITGET_API_KEY}
+    #   - BITGET_SECRET=${BITGET_SECRET}
+    #   - BITGET_PASSWORD=${BITGET_PASSWORD}
       
-      # ModelScope API
-      - MODELSCOPE_API_KEY=${MODELSCOPE_API_KEY}
+    #   # ModelScope API
+    #   - MODELSCOPE_API_KEY=${MODELSCOPE_API_KEY}
       
-      # Trading configuration
-      - PRIMARY_TIMEFRAME=${PRIMARY_TIMEFRAME:-1h}
-      - SECONDARY_TIMEFRAME=${SECONDARY_TIMEFRAME:-15m}
-      - TRADING_SYMBOL=${TRADING_SYMBOL:-BTC/USDT}
+    #   # Trading configuration
+    #   - PRIMARY_TIMEFRAME=${PRIMARY_TIMEFRAME:-1h}
+    #   - SECONDARY_TIMEFRAME=${SECONDARY_TIMEFRAME:-15m}
+    #   - TRADING_SYMBOL=${TRADING_SYMBOL:-BTC/USDT}
       
-      # Optional: Dashboard
-      - ENABLE_DASHBOARD_SERVER=${ENABLE_DASHBOARD_SERVER:-false}
+    #   # Optional: Dashboard
+    #   - ENABLE_DASHBOARD_SERVER=${ENABLE_DASHBOARD_SERVER:-false}
       
-      # Logging
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    #   # Logging
+    #   - LOG_LEVEL=${LOG_LEVEL:-INFO}
       
-      # Optional: Langfuse tracing
-      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
-      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
-      - LANGFUSE_HOST=${LANGFUSE_HOST:-https://cloud.langfuse.com}
+    #   # Optional: Langfuse tracing
+    #   - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
+    #   - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
+    #   - LANGFUSE_HOST=${LANGFUSE_HOST:-https://cloud.langfuse.com}
     
     volumes:
       # Persist SQLite database

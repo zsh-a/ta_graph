@@ -3,7 +3,7 @@ Enhanced Execution Node with Real Order Execution
 Migrated from Super-nof1.ai/lib/trading/unified-trading.ts and lib/ai/run.ts
 """
 
-from typing import List, Dict, Any, Optional
+from typing import Any
 from datetime import datetime
 import os
 import ccxt
@@ -23,10 +23,16 @@ bus = get_event_bus()
 
 class TradeResult:
     """Trade execution result"""
-    def __init__(self, success: bool, order_id: Optional[str] = None, 
-                 executed_price: Optional[float] = None, 
-                 executed_amount: Optional[float] = None,
-                 error: Optional[str] = None):
+    success: bool
+    order_id: str | None
+    executed_price: float | None
+    executed_amount: float | None
+    error: str | None
+
+    def __init__(self, success: bool, order_id: str | None = None, 
+                 executed_price: float | None = None, 
+                 executed_amount: float | None = None,
+                 error: str | None = None):
         self.success = success
         self.order_id = order_id
         self.executed_price = executed_price
@@ -38,9 +44,9 @@ def execute_buy_order(
     client: ExchangeClient,
     symbol: str,
     amount: float,
-    entry_price: Optional[float] = None,
-    stop_loss: Optional[float] = None,
-    take_profit: Optional[float] = None,
+    entry_price: float | None = None,
+    stop_loss: float | None = None,
+    take_profit: float | None = None,
     leverage: int = 20
 ) -> TradeResult:
     """
@@ -92,9 +98,9 @@ def execute_sell_order(
     client: ExchangeClient,
     symbol: str,
     amount: float,
-    entry_price: Optional[float] = None,
-    stop_loss: Optional[float] = None,
-    take_profit: Optional[float] = None,
+    entry_price: float | None = None,
+    stop_loss: float | None = None,
+    take_profit: float | None = None,
     leverage: int = 20
 ) -> TradeResult:
     """
@@ -129,7 +135,7 @@ def execute_sell_order(
 
 
 def save_trade_to_database(
-    plan: Dict[str, Any],
+    plan: dict[str, Any],
     result: TradeResult,
     model_type: ModelType = ModelType.Qwen
 ) -> None:
@@ -168,9 +174,9 @@ def execute_trade(state: AgentState) -> dict:
     """Execute Trade"""
     bus.emit_sync("node_start", {"node": "execution"})
     logger.info("🚀 Executing Trades...")
-    execution_plans = state.get("execution_results", [])
-    decisions = state.get("decisions", [])
-    warnings = list(state.get("warnings", []))  # Get existing warnings or empty list
+    execution_plans = state.get("execution_results") or []
+    decisions = state.get("decisions") or []
+    warnings_list = list(state.get("warnings") or [])  # Get existing warnings or empty list
     
     # Track execution metadata
     execution_metadata = {
@@ -186,14 +192,14 @@ def execute_trade(state: AgentState) -> dict:
             f"This indicates a failure in the risk assessment or execution planning stage."
         )
         logger.critical(error_msg)
-        warnings.append(error_msg)
+        warnings_list.append(error_msg)
     
     if not execution_plans:
         logger.info("No execution plans to process.")
         return {
             "execution_results": [],
             "execution_metadata": execution_metadata,
-            "warnings": warnings
+            "warnings": warnings_list
         }
     
     results = []
@@ -227,14 +233,30 @@ def execute_trade(state: AgentState) -> dict:
         stop_loss = plan.get("stop_loss")
         take_profit = plan.get("take_profit")
         leverage = plan.get("leverage", 20)
+
+        if not symbol or not amount or side is None:
+            logger.warning(f"⚠️  Incomplete plan for {symbol}: symbol={symbol}, amount={amount}, side={side}")
+            plan["execution_status"] = "FAILED"
+            plan["error"] = "Incomplete execution plan"
+            results.append(plan)
+            continue
+        
+        # Proper typing for mypy/pyright
+        symbol_val: str = str(symbol)
+        amount_val: float = float(amount)
+        side_val: str = str(side)
+        entry_val: float | None = float(entry_price) if entry_price is not None else None
+        sl_val: float | None = float(stop_loss) if stop_loss is not None else None
+        tp_val: float | None = float(take_profit) if take_profit is not None else None
+        lev_val: int = int(leverage)
         
         logger.info(f"\n{'='*60}")
-        logger.info(f"🎯 {side} {symbol}")
-        logger.info(f"   Amount: {amount:.4f}")
-        logger.info(f"   Entry: ${entry_price:.2f}")
-        logger.info(f"   Stop Loss: ${stop_loss:.2f}")
-        logger.info(f"   Take Profit: ${take_profit:.2f}")
-        logger.info(f"   Leverage: {leverage}x")
+        logger.info(f"🎯 {side_val} {symbol_val}")
+        logger.info(f"   Amount: {amount_val:.4f}")
+        logger.info(f"   Entry: ${entry_val:.2f}" if entry_val else "   Entry: MARKET")
+        logger.info(f"   Stop Loss: ${sl_val:.2f}" if sl_val else "   Stop Loss: NONE")
+        logger.info(f"   Take Profit: ${tp_val:.2f}" if tp_val else "   Take Profit: NONE")
+        logger.info(f"   Leverage: {lev_val}x")
         logger.info(f"   Mode: {'LIVE' if is_live else 'SIMULATION'}")
         logger.info(f"{'='*60}\n")
         
@@ -242,29 +264,26 @@ def execute_trade(state: AgentState) -> dict:
         if is_live and client:
             # Real execution
             try:
-                if side == "LONG":
+                if side_val.lower() == "buy":
                     result = execute_buy_order(
                         client=client,
-                        symbol=symbol,
-                        amount=amount,
-                        entry_price=entry_price,
-                        stop_loss=stop_loss,
-                        take_profit=take_profit,
-                        leverage=leverage
+                        symbol=symbol_val,
+                        amount=amount_val,
+                        entry_price=entry_val,
+                        stop_loss=sl_val,
+                        take_profit=tp_val,
+                        leverage=lev_val
                     )
-                elif side == "SHORT":
+                else: # Assuming anything not "buy" is a "sell" for this context
                     result = execute_sell_order(
                         client=client,
-                        symbol=symbol,
-                        amount=amount,
-                        entry_price=entry_price,
-                        stop_loss=stop_loss,
-                        take_profit=take_profit,
-                        leverage=leverage
+                        symbol=symbol_val,
+                        amount=amount_val,
+                        entry_price=entry_val,
+                        stop_loss=sl_val,
+                        take_profit=tp_val,
+                        leverage=lev_val
                     )
-                else:
-                    logger.error(f"Unknown side: {side}")
-                    continue
                 
                 # Update plan with results
                 plan["execution_id"] = result.order_id
@@ -273,10 +292,44 @@ def execute_trade(state: AgentState) -> dict:
                 plan["executed_amount"] = result.executed_amount
                 plan["error"] = result.error
                 
-                # Save to database if successful
+                # Save to legacy database if successful
                 if result.success:
                     save_trade_to_database(plan, result)
                     execution_metadata["trades_executed"] += 1
+                    
+                    # Emit execution event for frontend
+                    bus.emit_sync("execution_complete", {
+                        "node": "execution",
+                        "trade": {
+                            "symbol": symbol_val,
+                            "side": side_val,
+                            "amount": amount_val,
+                            "price": result.executed_price,
+                            "status": "FILLED",
+                            "order_id": result.order_id,
+                            "pnl": 0.0 # Initial PnL is 0
+                        }
+                    })
+
+                # Production Persistence
+                run_id = state.get("run_id")
+                if run_id:
+                    from ..database.persistence_manager import get_persistence_manager
+                    try:
+                        with get_persistence_manager() as pm:
+                            pm.record_execution(
+                                run_id=run_id,
+                                decision_id=str(plan.get("id")) if plan.get("id") else None, # Retrieved from strategy node
+                                symbol=symbol_val,
+                                side=side_val,
+                                order_id=result.order_id,
+                                status=plan["execution_status"],
+                                executed_price=result.executed_price,
+                                executed_amount=result.executed_amount,
+                                error=result.error
+                            )
+                    except Exception as persist_err:
+                        logger.warning(f"⚠️  Failed to record execution persistence: {persist_err}")
                 
             except Exception as e:
                 logger.error(f"Execution error: {e}")
@@ -285,20 +338,40 @@ def execute_trade(state: AgentState) -> dict:
         else:
             # Simulation mode
             logger.info("  [SIMULATION] Order placed successfully")
-            plan["execution_id"] = f"sim_{symbol.replace('/', '_')}_{int(datetime.now().timestamp())}"
+            plan["execution_id"] = f"sim_{symbol_val.replace('/', '_')}_{int(datetime.now().timestamp())}"
             plan["execution_status"] = "FILLED"
-            plan["executed_price"] = entry_price
-            plan["executed_amount"] = amount
+            plan["executed_price"] = entry_val
+            plan["executed_amount"] = amount_val
             
-            # Save to database even in simulation
+            # Save to legacy database even in simulation
             result = TradeResult(
                 success=True,
-                order_id=plan["execution_id"],
-                executed_price=entry_price,
-                executed_amount=amount
+                order_id=str(plan["execution_id"]),
+                executed_price=entry_val,
+                executed_amount=amount_val
             )
             save_trade_to_database(plan, result)
             execution_metadata["trades_executed"] += 1
+
+            # Production Persistence (Simulation)
+            run_id = state.get("run_id")
+            if run_id:
+                from ..database.persistence_manager import get_persistence_manager
+                try:
+                    with get_persistence_manager() as pm:
+                        pm.record_execution(
+                            run_id=run_id,
+                            decision_id=str(plan.get("id")) if plan.get("id") else None,
+                            symbol=symbol_val,
+                            side=side_val,
+                            order_id=str(plan["execution_id"]),
+                            status="FILLED",
+                            executed_price=entry_val,
+                            executed_amount=amount_val,
+                            metadata={"mode": "SIMULATION"}
+                        )
+                except Exception as persist_err:
+                    logger.warning(f"⚠️  Failed to record execution persistence (SIM): {persist_err}")
         
         results.append(plan)
     
@@ -309,5 +382,5 @@ def execute_trade(state: AgentState) -> dict:
     return {
         "execution_results": results,
         "execution_metadata": execution_metadata,
-        "warnings": warnings
+        "warnings": warnings_list
     }

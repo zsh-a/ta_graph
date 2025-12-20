@@ -171,7 +171,7 @@ async def main_with_telegram():
         
         approved = await notifier.request_approval(
             decision=decision,
-            chart_path=chart_path,
+            chart_path=str(chart_path) if chart_path else "",
             brooks_analysis=brooks_analysis
         )
         

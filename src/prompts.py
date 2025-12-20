@@ -1,3 +1,5 @@
+import os
+import base64
 from typing import List, Dict, Any
 from datetime import datetime
 
@@ -120,25 +122,29 @@ Generate the decision JSON.
     visual_guidance_template = """
 ## VISUAL GUIDANCE FOR CHART ANALYSIS
 1. **Visual Legend**:
-   - **Bars**: Green/White = Bullish; Red/Black = Bearish.
-   - **Lines**: Blue curve = 20-period EMA.
-   - **Background**: Grid lines = price levels.
+   - **Bars**: Green = Bullish; Red = Bearish.
+   - **EMA**: Blue curve = 20-period EMA.
+   - **Zones**: Background alternates light gray/white every 10 bars (e.g., ZONE A, B).
+   - **Signal Bar**: Highlighted with a **yellow background** area labeled "-1".
+   - **Swing Points (Sx)**: Key high/low points labeled **S1, S2, S3...** in dark boxes.
+     * **PURPOSE**: Use these to identify Legs for **Measured Moves**. 
+     * E.g., "Leg 1 starts at S1 and ends at S2".
+   - **Indices**: Numbers at bottom (-20, -19... 0). 
 
 2. **Spatial Focus**:
-   - **FOCUS**: Pay strict attention to the **far right edge**.
-   - **Bar 0**: The incomplete bar at the very right (Current Bar).
-   - **Bar -1**: The completed bar immediately to its left (Signal Bar).
-   - **Scope**: Focus analysis on the last 20 bars; use older bars only for major context.
+   - **Detail vs Context**: You are provided with a **Context Chart** (120 bars) and a **Focus Chart** (30 bars).
+   - Use the **Focus Chart** for high-precision bar identification and sizing.
+   - Bar 0 = Current Bar (Incomplete); Bar -1 = Signal Bar (Completed).
 
 3. **Data Alignment**:
-   - Cross-reference the image with the **Data Table** provided below.
-   - Use **Image** for: Shape, tail size, overlap, visual trend strength.
-   - Use **Data Table** for: Exact prices (Open/High/Low/Close).
-   - *Conflict Rule*: If visual look contradicts data, **trust the Data Table**.
+   - Cross-reference with the **Data Table** below.
+   - **Swing ID**: Check the "Swing" column in the data table for exact price/index matching S1, S2...
+   - *Conflict Rule*: If visual contradicts data, **trust the Data Table**.
 
-4. **Anti-Hallucination Checks**:
-   - **EMA20**: Is price *actually* touching/overlapping it, or just near? Look closely.
-   - **Tails**: Check tails of last 3 bars. Are they long relative to bodies?
+4. **Measured Move Logic**:
+   - Step 1: Identify Leg 1 (Spike) using Swing Points (e.g., S1 to S2).
+   - Step 2: Identify Leg 2 (Projection) starting from a breakout point or pullback (e.g., S3).
+   - Step 3: Project the height of Leg 1 (S2-S1) from S3 to find the Target.
 """
 
     for state in market_states:
@@ -146,6 +152,7 @@ Generate the decision JSON.
         timeframe = state.get('timeframe', '15m')
         bar_data_table = state.get('bar_data_table', '')
         chart_image_path = state.get('chart_image_path')
+        focus_chart_path = state.get('focus_chart_image_path')
         
         # Text Part
         section_text = f"### Chart & Data for {symbol} ({timeframe})\n{visual_guidance_template}"
@@ -157,28 +164,29 @@ Generate the decision JSON.
             "text": section_text
         })
         
-        # Image Part
-        if chart_image_path:
-            # Note: The caller (Strategy Node) should handle base64 reading.
-            # Here we just expect the path or rely on the LangChain/Graph integration 
-            # to handle image input if provided as a URI or base64.
-            # For now, let's assume we pass the path and the node handles reading, 
-            # OR we read it here. Let's return a special object that the node can process.
-            # But standard OpenAI format expects base64 or URL.
-            # I will assume the node handles the actual file reading to keep this pure function clean 
-            # or I can read it here if I import base64. 
-            # Let's verify if I can import base64. Yes I can.
-            import base64
-            import os
-            if os.path.exists(chart_image_path):
-                with open(chart_image_path, "rb") as image_file:
-                    base64_image = base64.b64encode(image_file.read()).decode('utf-8')
-                    content_parts.append({
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/png;base64,{base64_image}"
-                        }
-                    })
+        # Context Image Part
+        if chart_image_path and os.path.exists(chart_image_path):
+            with open(chart_image_path, "rb") as image_file:
+                base64_image = base64.b64encode(image_file.read()).decode('utf-8')
+                content_parts.append({
+                    "type": "text", "text": "☝️ CONTEXT CHART (120 bars):"
+                })
+                content_parts.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/png;base64,{base64_image}"}
+                })
+
+        # Focus Image Part
+        if focus_chart_path and os.path.exists(focus_chart_path):
+            with open(focus_chart_path, "rb") as image_file:
+                base64_focus = base64.b64encode(image_file.read()).decode('utf-8')
+                content_parts.append({
+                    "type": "text", "text": "☝️ FOCUS CHART (Zoomed 30 bars, high detail):"
+                })
+                content_parts.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/png;base64,{base64_focus}"}
+                })
 
     # Add the final instructions
     final_text = risk_performance_section + market_diagnosis_section + account_section + task_section

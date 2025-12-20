@@ -210,8 +210,34 @@ async def startup_event():
     
     # 开始缓冲历史事件
     dashboard = get_dashboard()
+    
+    # Tryer to restore historical events from database
+    try:
+        from .database.persistence_manager import get_persistence_manager
+        with get_persistence_manager() as pm:
+            recent_events = pm.get_recent_dashboard_events(limit=100)
+            logger.info(f"🔄 Rehydrating dashboard with {len(recent_events)} events from database")
+            for event in recent_events:
+                dashboard.event_history.append(event)
+    except Exception as e:
+        logger.warning(f"⚠️ Failed to rehydrate dashboard history: {e}")
+
     async def buffer_history(event):
+        """Buffer event in memory and persist to database"""
         dashboard.event_history.append(event)
+        
+        # Persist to database for rehydration after restart
+        try:
+            logger.debug(f"🔍 Attempting to persist event: type={event.get('type')}, node={(event.get('data') or {}).get('node')}")
+            from .database.persistence_manager import get_persistence_manager
+            with get_persistence_manager() as pm:
+                pm.store_dashboard_event(event)
+            logger.debug(f"✅ Event persisted successfully")
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to persist dashboard event: {e}")
+            import traceback
+            logger.warning(traceback.format_exc())
+    
     bus.subscribe("*", buffer_history)
     
     logger.info("✓ Dashboard EventBus started (FastAPI startup)")

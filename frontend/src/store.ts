@@ -115,6 +115,43 @@ export const useStore = create<DashboardState>((set, get) => ({
                 }, ...(isHistory ? [] : get().logs)].slice(0, 500);
                 break;
 
+            case 'market_data_complete':
+                updates.logs = [{
+                    id: Math.random().toString(36).substr(2, 9),
+                    type: 'market_data',
+                    node: data.node,
+                    message: `Market data fetched successfully`,
+                    timestamp,
+                    data
+                }, ...(isHistory ? [] : get().logs)].slice(0, 500);
+                break;
+
+            case 'risk_assessment_complete':
+                const plans = data.execution_plans || [];
+                const planLogs = plans.map((plan: any) => ({
+                    id: Math.random().toString(36).substr(2, 9),
+                    type: 'plan',
+                    node: 'risk',
+                    message: `Risk Assessment: ${plan.operation} ${plan.symbol}`,
+                    timestamp,
+                    data: plan
+                }));
+
+                // Add risk summary log if summary data exists
+                if (data.summary) {
+                    planLogs.push({
+                        id: Math.random().toString(36).substr(2, 9),
+                        type: 'risk_summary',
+                        node: 'risk',
+                        message: `Risk summary`,
+                        timestamp,
+                        data: data.summary
+                    });
+                }
+
+                updates.logs = [...planLogs, ...(isHistory ? [] : get().logs)].slice(0, 500);
+                break;
+
             case 'status_change':
                 updates.status = data.status;
                 break;
@@ -149,6 +186,54 @@ export const useStore = create<DashboardState>((set, get) => ({
                     const price = { time: Date.now() / 1000, value: data.price };
                     updates.prices = [...get().prices, price].slice(-1000);
                 }
+                break;
+
+            case 'execution_complete':
+                updates.logs = [{
+                    id: Math.random().toString(36).substr(2, 9),
+                    type: 'execution',
+                    node: data.node,
+                    message: `Execution: ${data.trade.side} ${data.trade.symbol} (${data.trade.status})`,
+                    timestamp,
+                    data: data.trade
+                }, ...(isHistory ? [] : get().logs)].slice(0, 500);
+                break;
+
+            case 'llm_log':
+                updates.logs = [{
+                    id: Math.random().toString(36).substr(2, 9),
+                    type: 'llm_log',
+                    node: data.node,
+                    message: `LLM Interaction (${data.model})`,
+                    timestamp,
+                    data
+                }, ...(isHistory ? [] : get().logs)].slice(0, 500);
+                break;
+
+            case 'order_monitor_update':
+                updates.logs = [{
+                    id: Math.random().toString(36).substr(2, 9),
+                    type: 'monitor',
+                    node: data.node,
+                    message: `Order Monitor: ${data.status} ${data.order_id}`,
+                    timestamp,
+                    data
+                }, ...(isHistory ? [] : get().logs)].slice(0, 500);
+                break;
+
+            case 'order_monitor_ping':
+                // Optional: We might not want to log every ping to avoid noise,
+                // or we log it as a temporary 'monitor_ping' type that we filter/replace.
+                // For now, let's skip adding a log for ping to avoid clutter,
+                // or use a separate state if we want to show "Active Monitoring" status somewhere else.
+                // But user asked for "monitoring results", so let's log them if they are meaningful?
+                // The ping data contains "elapsed" which is useful. Let's add it but maybe as a different type or just update status.
+                // Actually, let's treat it as a 'info' log but maybe less intrusive?
+                // Let's just log it for now to be safe.
+                // Better approach: Don't spam logs. Only log if something changed?
+                // The ping sends "elapsed", so it changes every time.
+                // Let's SKIP pings in the main log for now to avoid spamming 1 log per minute/tick.
+                // If user wants to see it, we can add a "Monitoring" status indicator in the UI instead of logs.
                 break;
         }
 

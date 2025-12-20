@@ -13,31 +13,61 @@ const initialNodes: Node[] = [
         id: 'market_data',
         data: { label: 'Market Data' },
         position: { x: 250, y: 0 },
-        style: { background: '#1e293b', color: '#f8fafc', border: '1px solid #334155' }
+        style: {
+            background: '#1e293b',
+            color: '#f8fafc',
+            borderWidth: '1px',
+            borderStyle: 'solid',
+            borderColor: '#334155'
+        }
     },
     {
         id: 'brooks_analyzer',
         data: { label: 'Brooks Analysis' },
         position: { x: 250, y: 100 },
-        style: { background: '#1e293b', color: '#f8fafc', border: '1px solid #334155' }
+        style: {
+            background: '#1e293b',
+            color: '#f8fafc',
+            borderWidth: '1px',
+            borderStyle: 'solid',
+            borderColor: '#334155'
+        }
     },
     {
         id: 'strategy',
         data: { label: 'Strategy' },
         position: { x: 250, y: 200 },
-        style: { background: '#1e293b', color: '#f8fafc', border: '1px solid #334155' }
+        style: {
+            background: '#1e293b',
+            color: '#f8fafc',
+            borderWidth: '1px',
+            borderStyle: 'solid',
+            borderColor: '#334155'
+        }
     },
     {
         id: 'risk',
         data: { label: 'Risk Guard' },
         position: { x: 250, y: 300 },
-        style: { background: '#1e293b', color: '#f8fafc', border: '1px solid #334155' }
+        style: {
+            background: '#1e293b',
+            color: '#f8fafc',
+            borderWidth: '1px',
+            borderStyle: 'solid',
+            borderColor: '#334155'
+        }
     },
     {
         id: 'execution',
         data: { label: 'Execution' },
         position: { x: 250, y: 400 },
-        style: { background: '#1e293b', color: '#f8fafc', border: '1px solid #334155' }
+        style: {
+            background: '#1e293b',
+            color: '#f8fafc',
+            borderWidth: '1px',
+            borderStyle: 'solid',
+            borderColor: '#334155'
+        }
     },
 ];
 

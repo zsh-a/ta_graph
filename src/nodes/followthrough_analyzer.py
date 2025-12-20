@@ -15,6 +15,8 @@ from langfuse import observe
 from ..logger import get_logger
 from ..notification.alerts import notify_trade_event
 from ..utils.model_manager import get_llm
+from ..state import AgentState
+from ..database.persistence_manager import get_persistence_manager
 
 logger = get_logger(__name__)
 
@@ -130,7 +132,21 @@ def analyze_followthrough(state: dict) -> dict:
             analysis = analyze_followthrough_simple(state)
     else:
         logger.warning("No chart image available. Using simplified OHLC analysis.")
-        analysis = analyze_followthrough_simple(state)
+    analysis = analyze_followthrough_simple(state)
+
+    # Persistence
+    run_id = state.get("run_id")
+    if run_id:
+        try:
+            with get_persistence_manager() as pm:
+                pm.record_analysis(
+                    run_id=run_id,
+                    node_name="followthrough_analyzer",
+                    content=analysis,
+                    reasoning=analysis.get("reasoning", "")
+                )
+        except Exception as e:
+            logger.warning(f"⚠️  Failed to record follow-through analysis: {e}")
     
     # Take action based on analysis results
     if analysis["recommendation"] == "exit_market":

@@ -19,6 +19,7 @@ class TradingState(TypedDict, total=False):
     status: str  # 'hunting', 'order_pending', 'managing', 'cooldown', 'halted'
     loop_count: int
     last_update: str  # ISO格式时间戳
+    run_id: Optional[str]  # Database run ID for persistence
     
     # ========== 配置信息 ==========
     symbol: str
@@ -91,3 +92,4 @@ class AgentState(TypedDict, total=False):
     current_bar: Optional[dict]
     warnings: Optional[List[str]]  # Added for execution visibility
     execution_metadata: Optional[dict]  # Added for execution tracking
+    run_id: Optional[str]  # Added for persistence link
