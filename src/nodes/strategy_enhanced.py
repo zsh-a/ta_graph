@@ -91,7 +91,7 @@ class Prediction(BaseModel):
 
 class TradingDecision(BaseModel):
     operation: Literal["Buy", "Sell", "Hold"]
-    symbol: Literal["BTC", "ETH", "SOL", "BNB", "DOGE"]
+    symbol: str
     wait_reason: str | None = None
     probability_score: float = Field(description="Probability score 0-100")
     cancelOrderIds: List[str] | None = None
@@ -113,9 +113,11 @@ def strategy_fallback(state: AgentState) -> dict:
     Returns safe Hold decision.
     """
     logger.warning("⏱️ Strategy generation timed out - defaulting to HOLD")
+    symbol = state.get("symbol", "BTC")
     brooks_analysis = state.get("brooks_analysis")
     return {
         "decisions": [create_hold_decision(
+            symbol=symbol,
             wait_reason="Strategy generation exceeded timeout - recommending HOLD for safety",
             brooks_analysis=brooks_analysis
         )]
@@ -166,8 +168,9 @@ def generate_strategy(state: AgentState) -> dict:
         force_hold, hold_reason = should_force_hold(brooks_analysis)
         
         if force_hold:
-            logger.info(f"Brooks analysis forces HOLD: {hold_reason}")
-            hold_decision = create_hold_decision(hold_reason, brooks_analysis)
+            symbol = state.get("symbol", "BTC")
+            logger.info(f"Brooks analysis forces HOLD for {symbol}: {hold_reason}")
+            hold_decision = create_hold_decision(symbol, hold_reason, brooks_analysis)
             bus.emit_sync("strategy_complete", {"node": "strategy", "decision": hold_decision, "forced": True})
             
             # IMPORTANT: Persist Hold decisions too!
@@ -179,7 +182,7 @@ def generate_strategy(state: AgentState) -> dict:
                         pm.record_decision(
                             run_id=str(run_id),
                             operation="Hold",
-                            symbol=hold_decision.get("symbol", "BTC"),
+                            symbol=hold_decision.get("symbol", state.get("symbol", "BTC")),
                             rationale=hold_reason,
                             wait_reason=hold_reason
                         )
@@ -207,7 +210,7 @@ def generate_strategy(state: AgentState) -> dict:
     
     # ========== Build Dynamic Prompt ==========
     
-    symbols = [s.get("symbol", "BTC") for s in market_states]
+    symbols = [s.get("symbol", state.get("symbol", "BTC")) for s in market_states]
     primary_tf = state.get("primary_timeframe", "15m")
     
     # Use dynamic prompt if Brooks analysis available
@@ -287,6 +290,7 @@ IMPORTANT: Respect the Brooks analysis. If it says "wait", you should strongly c
             logger.info(f"Trade filtered: {combined_reason}")
             
             hold_decision = create_hold_decision(
+                symbol=state.get("symbol", "BTC"),
                 wait_reason=combined_reason,
                 brooks_analysis=brooks_analysis
             )

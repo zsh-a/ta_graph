@@ -90,18 +90,18 @@ class AccountManager:
         self.mock_balance = 10000.0
         self.mock_available = 10000.0
         self.mock_positions: List[Dict] = [
-            {
-                "symbol": "BTC/USDT",
-                "side": "long",
-                "size": 0.5,
-                "entry_price": 65000.0,
-                "mark_price": 65500.0,
-                "unrealized_pnl": 250.0,
-                "leverage": 10.0,
-                "margin_type": "isolated",
-                "stop_loss": 64000.0,
-                "take_profit": 68000.0
-            }
+            # {
+            #     "symbol": "BTC/USDT",
+            #     "side": "long",
+            #     "size": 0.5,
+            #     "entry_price": 65000.0,
+            #     "mark_price": 65500.0,
+            #     "unrealized_pnl": 250.0,
+            #     "leverage": 10.0,
+            #     "margin_type": "isolated",
+            #     "stop_loss": 64000.0,
+            #     "take_profit": 68000.0
+            # }
         ]
         self.mock_orders: List[Dict] = []
     

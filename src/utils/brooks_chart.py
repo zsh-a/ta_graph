@@ -13,11 +13,13 @@ from matplotlib.axes import Axes
 
 def create_brooks_style():
     """Create custom mplfinance style for Al Brooks charts"""
+    up_color = '#00b060'    # Vibrant Green
+    down_color = '#ff333a'  # Vibrant Red
     marketcolors = mpf.make_marketcolors(
-        up='#00b060',    # Vibrant Green
-        down='#ff333a',  # Vibrant Red
-        edge={'up': 'black', 'down': 'black'},
-        wick={'up': 'black', 'down': 'black'},
+        up=up_color,
+        down=down_color,
+        edge='inherit',    # Remove black edge
+        wick='inherit',    # Match wick to body
         volume='in',
         alpha=1.0
     )
@@ -255,8 +257,9 @@ def save_brooks_chart(
         ylabel='Price',
         volume=show_volume,
         figsize=(16, 12), # Increased height for rotated labels
-        tight_layout=False, # Manual layout adjustment
+        tight_layout=True, # Improved layout
         returnfig=True,
+        scale_width_adjustment=dict(candle=1.2), # Wider candles like TradingView
         warn_too_much_data=300
     )
     

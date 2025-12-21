@@ -503,11 +503,11 @@ HTF Signal: {htf_analysis.get('signal', 'Unknown')}
 
 # ==================== Helper Functions ====================
 
-def create_hold_decision(wait_reason: str, brooks_analysis: dict | None = None) -> dict:
+def create_hold_decision(symbol: str, wait_reason: str, brooks_analysis: dict | None = None) -> dict:
     """Create a Hold decision with Brooks context"""
     return {
         "operation": "Hold",
-        "symbol": "BTC",
+        "symbol": symbol,
         "wait_reason": wait_reason,
         "probability_score": 0.0,
         "rationale": f"[Brooks Analysis]: {wait_reason}",
