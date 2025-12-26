@@ -19,6 +19,7 @@ from ..state import AgentState
 from ..logger import get_logger
 from ..utils.model_manager import get_llm
 from ..utils.timeout_decorator import with_timeout
+from ..utils.error_handler import with_error_handling, APIError
 from ..utils.event_bus import get_event_bus
 
 logger = get_logger(__name__)
@@ -350,6 +351,7 @@ def brooks_fallback(state: AgentState) -> dict:
 
 @observe()
 @with_timeout(timeout_seconds=120, fallback_fn=brooks_fallback, operation_name="Brooks Analysis")
+@with_error_handling(max_retries=2, fallback_fn=brooks_fallback, retryable_exceptions=(APIError, ConnectionError, TimeoutError))
 def brooks_analyzer(state: AgentState) -> dict:
     """
     Brooks-specific price action analysis node.

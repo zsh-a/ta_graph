@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-ModelProvider = Literal["local", "modelscope", "openai"]
+ModelProvider = Literal["local", "modelscope", "openai", "deepseek_reasoner"]
 
 class ModelConfig:
     """模型配置类"""
@@ -22,7 +22,8 @@ class ModelConfig:
         base_url: Optional[str] = None,
         api_key: Optional[str] = None,
         temperature: float = 0.1,
-        timeout: int = 120
+        timeout: int = 120,
+        enable_thinking: bool = False  # DeepSeek thinking mode
     ):
         self.provider = provider
         self.model_name = model_name
@@ -30,6 +31,7 @@ class ModelConfig:
         self.api_key = api_key
         self.temperature = temperature
         self.timeout = timeout
+        self.enable_thinking = enable_thinking
         
     @classmethod
     def from_env(cls, provider: Optional[ModelProvider] = None) -> "ModelConfig":
@@ -61,6 +63,16 @@ class ModelConfig:
                 api_key=os.getenv("OPENAI_API_KEY"),
                 temperature=float(os.getenv("MODEL_TEMPERATURE", "0.1"))
             )
+        elif provider == "deepseek_reasoner":
+            # DeepSeek Reasoner via ModelScope with thinking mode
+            return cls(
+                provider="deepseek_reasoner",
+                model_name=os.getenv("DEEPSEEK_MODEL_NAME", "deepseek-ai/DeepSeek-V3"),
+                base_url=os.getenv("MODELSCOPE_API_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+                api_key=os.getenv("MODELSCOPE_API_KEY"),  # 使用 ModelScope API Key
+                temperature=float(os.getenv("MODEL_TEMPERATURE", "0.1")),
+                enable_thinking=True
+            )
         else:
             raise ValueError(f"Unknown provider: {provider}")
     
@@ -71,7 +83,8 @@ class ModelConfig:
             "model_name": self.model_name,
             "base_url": self.base_url,
             "temperature": self.temperature,
-            "timeout": self.timeout
+            "timeout": self.timeout,
+            "enable_thinking": self.enable_thinking
         }
 
 
@@ -115,6 +128,10 @@ class ModelManager:
         else:
             # 如果没有api_key，使用占位符（本地API通常不需要真实key）
             llm_kwargs["api_key"] = "sk-placeholder"
+        
+        # DeepSeek thinking mode: pass extra_body
+        if config.enable_thinking:
+            llm_kwargs["extra_body"] = {"enable_thinking": True}
             
         # 创建LLM实例
         llm = ChatOpenAI(**llm_kwargs)

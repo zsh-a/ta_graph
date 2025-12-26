@@ -5,6 +5,7 @@ from ..state import AgentState
 from ..logger import get_logger
 from ..utils.event_bus import get_event_bus
 from ..utils.price_calculator import calculate_entry_price, calculate_stop_loss_price, calculate_take_profit_price
+from ..utils.error_handler import with_error_handling, DataError
 
 logger = get_logger(__name__)
 bus = get_event_bus()
@@ -14,6 +15,27 @@ bus = get_event_bus()
 def normalize_symbol(symbol: str) -> str:
     """Normalize symbol to base currency (BTC, ETH, etc.)"""
     return symbol.split('/')[0].split(':')[0]
+
+
+def risk_fallback(state: AgentState) -> dict[str, Any]:
+    """
+    Fallback if risk assessment fails.
+    Returns Hold decisions for all proposed trades.
+    """
+    logger.warning("⚠️ Risk assessment failed - defaulting to HOLD for all decisions")
+    decisions = state.get("decisions", [])
+    
+    hold_plans = []
+    for decision in decisions:
+        symbol = decision.get("symbol", "UNKNOWN")
+        hold_plans.append({
+            "symbol": symbol,
+            "operation": "Hold",
+            "reason": "Risk assessment failed - blocking trade for safety"
+        })
+    
+    return {"execution_results": hold_plans}
+
 
 class RiskConfig:
     trading_mode: str
@@ -31,7 +53,9 @@ class RiskConfig:
         # Default fallback risk if not specified in decision
         self.default_risk_percent = 1.0
 
+
 @observe()
+@with_error_handling(max_retries=1, fallback_fn=risk_fallback)
 def assess_risk(state: AgentState) -> dict[str, Any]:
     """Assess Risk"""
     bus.emit_sync("node_start", {"node": "risk"})
@@ -41,7 +65,7 @@ def assess_risk(state: AgentState) -> dict[str, Any]:
     # Create dict from market_states list with normalized symbols as keys
     raw_market_states = state.get("market_states", [])
     if not raw_market_states:
-        raise ValueError("market_states is empty - cannot assess risk without market data")
+        raise DataError("market_states is empty - cannot assess risk without market data")
     
     market_states = {normalize_symbol(m['symbol']): m for m in raw_market_states}
     

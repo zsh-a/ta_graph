@@ -3,7 +3,9 @@ Enhanced LangGraph with Brooks Analysis and HITL
 Integrates all optimization components into the trading workflow.
 """
 
+from typing import Optional
 from langgraph.graph import StateGraph, END
+from langgraph.graph.state import CompiledStateGraph as CompiledGraph
 from langgraph.checkpoint.sqlite import SqliteSaver
 import os
 
@@ -16,6 +18,52 @@ from .nodes.execution import execute_trade
 from .logger import get_logger
 
 logger = get_logger(__name__)
+
+
+# ========== Analysis Subgraph (Singleton) ==========
+
+_analysis_subgraph: Optional[CompiledGraph] = None
+
+
+def get_analysis_subgraph() -> CompiledGraph:
+    """
+    获取编译好的 Analysis Subgraph（单例模式）
+    
+    使用 LangGraph Subgraph 模式，避免每次调用时重新创建图。
+    当 parent graph 和 subgraph 共享 state keys 时，
+    可以直接将 compiled subgraph 传入 add_node()。
+    
+    Returns:
+        编译好的 Analysis Graph
+    """
+    global _analysis_subgraph
+    
+    if _analysis_subgraph is None:
+        logger.info("Creating Analysis Subgraph (singleton)...")
+        
+        workflow = StateGraph(AgentState)
+        
+        # Add nodes
+        workflow.add_node("market_data", fetch_market_data)
+        workflow.add_node("brooks_analyzer", brooks_analyzer)
+        workflow.add_node("strategy", generate_strategy)
+        workflow.add_node("risk", assess_risk)
+        workflow.add_node("execution", execute_trade)
+        
+        # Define flow: linear pipeline
+        workflow.set_entry_point("market_data")
+        workflow.add_edge("market_data", "brooks_analyzer")
+        workflow.add_edge("brooks_analyzer", "strategy")
+        workflow.add_edge("strategy", "risk")
+        workflow.add_edge("risk", "execution")
+        workflow.add_edge("execution", END)
+        
+        # Compile without checkpointer - parent graph handles persistence
+        _analysis_subgraph = workflow.compile()
+        
+        logger.info("✓ Analysis Subgraph created")
+    
+    return _analysis_subgraph
 
 def create_graph(enable_checkpointing: bool = True, enable_hitl: bool = False):
     """

@@ -25,6 +25,14 @@ interface DashboardState {
     currentRunDetails: any | null;
     historyLoading: boolean;
 
+    // Graph Structure State
+    graphData: {
+        nodes: { id: string; label: string; subgraph?: string }[];
+        edges: { id: string; source: string; target: string; conditional: boolean; label?: string }[];
+        subgraphs: string[];
+    } | null;
+    graphLoading: boolean;
+
     // Actions
     updateFromInitialState: (data: any) => void;
     addLog: (log: Omit<TradeLog, 'id'>) => void;
@@ -36,6 +44,7 @@ interface DashboardState {
     processEvent: (message: any, isHistory?: boolean) => Partial<DashboardState>;
     fetchHistoryRuns: (filters?: any) => Promise<void>;
     fetchRunDetails: (runId: string) => Promise<void>;
+    fetchGraphStructure: () => Promise<void>;
 }
 
 export const useStore = create<DashboardState>((set, get) => ({
@@ -60,6 +69,8 @@ export const useStore = create<DashboardState>((set, get) => ({
     historyRuns: [],
     currentRunDetails: null,
     historyLoading: false,
+    graphData: null,
+    graphLoading: false,
 
     updateFromInitialState: (data) => set((state) => {
         let accumulatedLogs: TradeLog[] = [];
@@ -363,6 +374,27 @@ export const useStore = create<DashboardState>((set, get) => ({
         } catch (error) {
             console.error('Failed to fetch run details:', error);
             set({ historyLoading: false });
+        }
+    },
+
+    fetchGraphStructure: async () => {
+        set({ graphLoading: true });
+        try {
+            const wsUrl = import.meta.env.VITE_WS_URL || 'ws://127.0.0.1:8000/ws';
+            const baseUrl = wsUrl.replace('ws://', 'http://').replace('wss://', 'https://').replace('/ws', '');
+
+            const response = await fetch(`${baseUrl}/graph`);
+            const data = await response.json();
+
+            if (data.error) {
+                console.error('Failed to fetch graph structure:', data.error);
+                set({ graphData: null, graphLoading: false });
+            } else {
+                set({ graphData: data, graphLoading: false });
+            }
+        } catch (error) {
+            console.error('Failed to fetch graph structure:', error);
+            set({ graphData: null, graphLoading: false });
         }
     },
 }));

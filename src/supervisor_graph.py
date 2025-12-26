@@ -9,14 +9,14 @@
 """
 
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Literal
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.sqlite import SqliteSaver
 
-from src.state import TradingState, AgentState
-from src.graph import create_graph
-from src.position_management_workflow import create_position_management_workflow
+from src.state import TradingState
+from .graph import get_analysis_subgraph
+from src.position_management_workflow import get_position_management_subgraph
 from src.safety import get_equity_protector, ConvictionTracker
 from src.database.account_manager import get_account_manager
 from src.nodes.market_data import fetch_market_data
@@ -45,7 +45,7 @@ def init_node(state: TradingState) -> dict:
     
     updates = {
         "loop_count": state.get("loop_count", 0),
-        "last_update": datetime.now().isoformat(),
+        "last_update": datetime.now(timezone.utc).isoformat(),
         "is_trading_enabled": True,
         "messages": state.get("messages", []) + ["System initialized"],
         "errors": [],
@@ -103,50 +103,54 @@ def risk_guard_node(state: TradingState) -> dict:
     return {
         "is_trading_enabled": True,
         "loop_count": state.get("loop_count", 0) + 1,
-        "last_update": datetime.now().isoformat()
+        "last_update": datetime.now(timezone.utc).isoformat()
     }
 
 
-def market_scanner_node(state: TradingState) -> dict:
+def pre_scanner_node(state: TradingState) -> dict:
     """
-    市场扫描节点 - 包装analysis graph
+    扫描前置节点 - 准备analysis subgraph需要的状态字段
     
-    寻找交易机会
+    由于parent graph和subgraph共享TradingState，
+    这里负责设置subgraph需要但parent中格式不同的字段
     """
     logger.info("🔍 HUNTING MODE: Scanning market...")
     
-    # 准备analysis graph的输入
-    analysis_input: AgentState = {
-        "symbol": state["symbol"],
+    # 准备 subgraph 需要的字段格式
+    updates: dict = {
         "primary_timeframe": f"{state.get('timeframe', 60)}m",
-        "messages": [],
-        "positions": {state["symbol"]: state.get("position")} if state.get("position") else {},
-        "account_info": {
-            "available_cash": state.get("account_balance", 10000.0),
-            "daily_pnl_percent": state.get("daily_pnl", 0.0) / state.get("account_balance", 10000.0) * 100 if state.get("account_balance", 0) > 0 else 0.0,
-            "open_orders": []
-        },
-        "run_id": state.get("run_id")
     }
     
-    # 调用analysis graph
-    # try:
-    analysis_graph = create_graph(enable_checkpointing=False, enable_hitl=False)
-    result = analysis_graph.invoke(analysis_input)
+    # 确保 positions 格式正确 (subgraph期望 {symbol: position})
+    if state.get("position") and state.get("symbol"):
+        updates["positions"] = {state["symbol"]: state.get("position")}
+    else:
+        updates["positions"] = {}
     
-    # 提取结果
-    updates = {
-        "market_analysis": result.get("market_analysis"),
-        "brooks_analysis": result.get("brooks_analysis"),
-        "decisions": result.get("decisions"),
-        "bars": result.get("bars", []),
-        "current_bar": result.get("current_bar"),
-        "execution_results": result.get("execution_results"),
+    # 确保 account_info 格式正确
+    account_balance = state.get("account_balance", 10000.0)
+    daily_pnl = state.get("daily_pnl", 0.0)
+    updates["account_info"] = {
+        "available_cash": account_balance,
+        "daily_pnl_percent": (daily_pnl / account_balance * 100) if account_balance > 0 else 0.0,
+        "open_orders": []
+    }
+    
+    return updates
+
+
+def post_scanner_node(state: TradingState) -> dict:
+    """
+    扫描后置节点 - 处理analysis subgraph的执行结果
+    
+    检查是否有新订单，更新系统状态
+    """
+    updates: dict = {
         "messages": state.get("messages", []) + ["Market scan completed"]
     }
     
     # 检查是否有新订单
-    exec_results = result.get("execution_results", [])
+    exec_results = state.get("execution_results", [])
     if exec_results:
         for res in exec_results:
             if res.get("order_id"):
@@ -154,7 +158,7 @@ def market_scanner_node(state: TradingState) -> dict:
                 updates.update({
                     "status": "order_pending",
                     "pending_order_id": res["order_id"],
-                    "order_placed_time": datetime.now().isoformat(),
+                    "order_placed_time": datetime.now(timezone.utc).isoformat(),
                     "next_action": "manage"
                 })
                 break
@@ -163,87 +167,67 @@ def market_scanner_node(state: TradingState) -> dict:
         updates["next_action"] = "scan"
     
     return updates
-        
-    # except Exception as e:
-    #     logger.error(f"❌ Market scan failed: {e}", exc_info=True)
-    #     return {
-    #         "errors": state.get("errors", []) + [str(e)],
-    #         "next_action": "scan",  # 失败后重试
-    #         "messages": state.get("messages", []) + [f"Scan error: {str(e)}"]
-    #     }
 
 
-def position_manager_node(state: TradingState) -> dict:
+def pre_manager_node(state: TradingState) -> dict:
     """
-    持仓管理节点 - 包装position management workflow
+    持仓管理前置节点 - 准备manager subgraph需要的状态
     
     管理活跃订单和持仓
     """
     logger.info("📊 MANAGING MODE: Managing position/order...")
     
-    # Ensure we have market data (bars, current_bar) for risk management
-    # scanner_node fetches it via analysis_graph, but manager_node needs to do it if skipped scanner
+    # 确保我们有市场数据 (bars, current_bar) 用于风险管理
+    updates: dict = {}
+    
     if not state.get("current_bar"):
         logger.info("📥 Fetching fresh market data for management...")
-        # Prepare minimal AgentState for fetch_market_data
+        # 准备fetch_market_data需要的输入
         data_input = {
-            "symbol": state["symbol"],
+            "symbol": state.get("symbol", "BTC/USDT"),
             "primary_timeframe": f"{state.get('timeframe', 60)}m",
         }
-        # Call fetch_market_data node
-        data_result = fetch_market_data(data_input) # type: ignore
-        state = {**state, **data_result} # Update local state with fetched data
+        # 调用fetch_market_data节点
+        data_result = fetch_market_data(data_input)  # type: ignore
+        updates.update(data_result)
     
-    # 调用position management workflow
-    try:
-        pm_workflow = create_position_management_workflow().compile()
+    return updates
+
+
+def post_manager_node(state: TradingState) -> dict:
+    """
+    持仓管理后置节点 - 处理manager subgraph的结果
+    
+    包括：
+    - 检查持仓是否已结束
+    - 更新PnL
+    - 更新equity protector
+    """
+    updates: dict = {}
+    
+    # 检查是否退出了持仓
+    if state.get("status") == "looking_for_trade":
+        logger.info("💤 Position closed. Returning to looking_for_trade mode.")
+        updates["next_action"] = "scan"
         
-        # 准备输入（直接使用TradingState，两者兼容）
-        pm_input = dict(state)
-        result = pm_workflow.invoke(pm_input)
-        
-        # 提取更新
-        updates = {
-            "status": result.get("status"),
-            "position": result.get("position"),
-            "stop_loss": result.get("stop_loss"),
-            "take_profit": result.get("take_profit"),
-            "breakeven_locked": result.get("breakeven_locked", False),
-            "followthrough_checked": result.get("followthrough_checked", False),
-            "last_followthrough_analysis": result.get("last_followthrough_analysis"),
-            "pending_order_id": result.get("pending_order_id"),
-            "messages": state.get("messages", []) + ["Position management completed"]
-        }
-        
-        # 检查是否退出了持仓
-        if result.get("status") == "looking_for_trade":
-            logger.info("💤 Position closed. Returning to looking_for_trade mode.")
-            updates["next_action"] = "scan"
+        # 记录PnL
+        exit_pnl = state.get("last_trade_pnl")
+        if exit_pnl is not None:
+            updates["daily_pnl"] = state.get("daily_pnl", 0) + exit_pnl
             
-            # 记录PnL
-            if result.get("exit_pnl") is not None:
-                updates["last_trade_pnl"] = result["exit_pnl"]
-                updates["daily_pnl"] = state.get("daily_pnl", 0) + result["exit_pnl"]
-                
-                # 更新equity protector
-                protector = get_equity_protector()
-                protector.update_trade_result(
-                    result["exit_pnl"],
-                    state.get("account_balance", 10000.0)
-                )
-        else:
-            # 继续管理
-            updates["next_action"] = "manage"
-        
-        return updates
-        
-    except Exception as e:
-        logger.error(f"❌ Position management failed: {e}", exc_info=True)
-        return {
-            "errors": state.get("errors", []) + [str(e)],
-            "next_action": "manage",  # 失败后重试管理
-            "messages": state.get("messages", []) + [f"Management error: {str(e)}"]
-        }
+            # 更新equity protector
+            protector = get_equity_protector()
+            protector.update_trade_result(
+                exit_pnl,
+                state.get("account_balance", 10000.0)
+            )
+    else:
+        # 继续管理
+        updates["next_action"] = "manage"
+    
+    updates["messages"] = state.get("messages", []) + ["Position management completed"]
+    
+    return updates
 
 
 def cooldown_node(state: TradingState) -> dict:
@@ -326,8 +310,17 @@ def build_trading_supervisor(
     # 添加节点
     builder.add_node("init", init_node)
     builder.add_node("risk_guard", risk_guard_node)
-    builder.add_node("scanner", market_scanner_node)
-    builder.add_node("manager", position_manager_node)
+    
+    # Scanner分支: pre_scanner -> analysis_subgraph -> post_scanner
+    builder.add_node("pre_scanner", pre_scanner_node)
+    builder.add_node("scanner", get_analysis_subgraph())  # 直接添加subgraph作为节点
+    builder.add_node("post_scanner", post_scanner_node)
+    
+    # Manager分支: pre_manager -> manager_subgraph -> post_manager
+    builder.add_node("pre_manager", pre_manager_node)
+    builder.add_node("manager", get_position_management_subgraph())  # 直接添加subgraph作为节点
+    builder.add_node("post_manager", post_manager_node)
+    
     builder.add_node("cooldown", cooldown_node)
     
     # 设置入口点
@@ -341,16 +334,24 @@ def build_trading_supervisor(
         "risk_guard",
         supervisor_router,
         {
-            "scanner": "scanner",
-            "manager": "manager",
+            "scanner": "pre_scanner",  # 路由到pre_scanner
+            "manager": "pre_manager",  # 路由到pre_manager
             "cooldown": "cooldown",
             "__end__": END
         }
     )
     
-    # 各节点执行完后都结束（由外部控制循环频率）
-    builder.add_edge("scanner", END)
-    builder.add_edge("manager", END)
+    # Scanner分支的边: pre_scanner -> scanner (subgraph) -> post_scanner -> END
+    builder.add_edge("pre_scanner", "scanner")
+    builder.add_edge("scanner", "post_scanner")
+    builder.add_edge("post_scanner", END)
+    
+    # Manager分支的边: pre_manager -> manager (subgraph) -> post_manager -> END
+    builder.add_edge("pre_manager", "manager")
+    builder.add_edge("manager", "post_manager")
+    builder.add_edge("post_manager", END)
+    
+    # Cooldown分支
     builder.add_edge("cooldown", END)
     
     # 编译

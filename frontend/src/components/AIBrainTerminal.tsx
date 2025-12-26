@@ -229,8 +229,8 @@ const MarketDataCard = ({ data }: { data: any }) => (
         <div className="flex justify-between items-center mb-1">
             <span className="text-muted-foreground uppercase text-[8px]">24h Change</span>
             <span className={`font-bold ${data.price_change_24h > 0 ? 'text-green-500' :
-                    data.price_change_24h < 0 ? 'text-red-500' :
-                        'text-yellow-500'
+                data.price_change_24h < 0 ? 'text-red-500' :
+                    'text-yellow-500'
                 }`}>
                 {data.price_change_24h > 0 ? '+' : ''}{data.price_change_24h?.toFixed(2)}%
             </span>
@@ -263,8 +263,8 @@ const RiskSummaryCard = ({ data }: { data: any }) => (
         <div className="flex justify-between items-center mb-2">
             <span className="text-muted-foreground uppercase text-[8px]">Daily P&L</span>
             <span className={`font-bold ${data.daily_pnl_percent > 0 ? 'text-green-500' :
-                    data.daily_pnl_percent < 0 ? 'text-red-500' :
-                        'text-yellow-500'
+                data.daily_pnl_percent < 0 ? 'text-red-500' :
+                    'text-yellow-500'
                 }`}>
                 {data.daily_pnl_percent > 0 ? '+' : ''}{data.daily_pnl_percent?.toFixed(2)}%
             </span>
@@ -305,42 +305,85 @@ const LogContent = ({ log }: { log: any }) => {
 
 // --- Main Component ---
 
+type LogCategory = 'all' | 'analysis' | 'strategy' | 'execution' | 'error';
+
 export const AIBrainTerminal = () => {
     const logs = useStore((state) => state.logs);
     const [timeFilter, setTimeFilter] = React.useState<number>(0); // 0 = All
+    const [categoryFilter, setCategoryFilter] = React.useState<LogCategory>('all');
 
     const filteredLogs = React.useMemo(() => {
-        if (timeFilter === 0) return logs;
-        // Simple client-side filtering for now
-        const cutoff = Date.now() - (timeFilter * 60 * 1000);
-        return logs.filter(l => new Date(l.timestamp).getTime() > cutoff);
-    }, [logs, timeFilter]);
+        let result = logs;
+
+        // Category Filter
+        if (categoryFilter !== 'all') {
+            result = result.filter(log => {
+                switch (categoryFilter) {
+                    case 'analysis':
+                        return ['thinking', 'market_data', 'risk_summary', 'success'].includes(log.type);
+                    case 'strategy':
+                        return ['decision', 'plan', 'llm_log'].includes(log.type);
+                    case 'execution':
+                        return ['execution', 'monitor'].includes(log.type);
+                    case 'error':
+                        return log.type === 'error';
+                    default:
+                        return true;
+                }
+            });
+        }
+
+        // Time Filter
+        if (timeFilter !== 0) {
+            const cutoff = Date.now() - (timeFilter * 60 * 1000);
+            result = result.filter(l => {
+                const ts = new Date(l.timestamp).getTime();
+                return !isNaN(ts) && ts > cutoff;
+            });
+        }
+
+        return result;
+    }, [logs, timeFilter, categoryFilter]);
 
     return (
         <div className="w-96 glass-card p-4 flex flex-col h-full">
-            <div className="flex justify-between items-center mb-4 border-b border-border pb-2">
-                <div className="flex items-center gap-2">
-                    <h3 className="text-sm font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
-                        <Terminal size={16} />
-                        AI Execution Log
-                    </h3>
+            <div className="flex flex-col gap-3 mb-4 border-b border-border pb-3">
+                <div className="flex justify-between items-center">
+                    <div className="flex items-center gap-2">
+                        <h3 className="text-sm font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
+                            <Terminal size={16} />
+                            AI Execution Log
+                        </h3>
+                    </div>
+                    <span className="text-[10px] font-mono bg-muted/20 px-2 py-0.5 rounded text-muted-foreground">
+                        {filteredLogs.length} LOGS
+                    </span>
                 </div>
 
                 <div className="flex items-center gap-2">
                     <select
-                        className="bg-background/20 border border-border rounded px-2 py-0.5 text-[9px] focus:outline-none focus:ring-1 focus:ring-primary text-muted-foreground"
+                        className="flex-1 bg-background/20 border border-border rounded px-2 py-1 text-[10px] focus:outline-none focus:ring-1 focus:ring-primary text-muted-foreground"
+                        value={categoryFilter}
+                        onChange={(e) => setCategoryFilter(e.target.value as LogCategory)}
+                    >
+                        <option value="all">ALL CATEGORIES</option>
+                        <option value="analysis">ANALYSIS</option>
+                        <option value="strategy">STRATEGY</option>
+                        <option value="execution">EXECUTION</option>
+                        <option value="error">ERRORS</option>
+                    </select>
+
+                    <select
+                        className="w-24 bg-background/20 border border-border rounded px-2 py-1 text-[10px] focus:outline-none focus:ring-1 focus:ring-primary text-muted-foreground"
                         value={timeFilter}
                         onChange={(e) => setTimeFilter(Number(e.target.value))}
                     >
-                        <option value={0}>ALL HISTORY</option>
+                        <option value={0}>ALL TIME</option>
                         <option value={5}>LAST 5M</option>
                         <option value={15}>LAST 15M</option>
                         <option value={60}>LAST 1H</option>
                         <option value={1440}>LAST 24H</option>
                     </select>
-                    <span className="text-[10px] font-mono bg-muted/20 px-2 py-0.5 rounded text-muted-foreground">
-                        {filteredLogs.length} LOGS
-                    </span>
                 </div>
             </div>
 

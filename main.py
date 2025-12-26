@@ -25,7 +25,12 @@ from src.logger import get_logger
 logger = get_logger(__name__)
 
 
-@observe(name="Trading System - Supervisor Pattern")
+@observe(name="Trading Tick")
+def run_tick_workflow(app, tick_input, config_dict):
+    """Execute a single tick of the trading graph observed by Langfuse"""
+    return app.invoke(tick_input, config=config_dict)
+
+
 def main():
     """
     主程序 - 极简Runner
@@ -196,7 +201,7 @@ def main():
         try:
             while True:
                 # === 等待下一个K线收盘 ===
-                if tick_count > 0:  # 跳过第一次（启动时立即执行）
+                if tick_count >= 0:  # 跳过第一次（启动时立即执行）
                     timing_info = candle_timer.wait_until_next_candle()
                     logger.info(
                         f"🕐 Candle close: {timing_info['next_close'].strftime('%H:%M:%S')}, "
@@ -236,9 +241,10 @@ def main():
                     if tick_count == 1:
                         tick_input = {**initial_state, "run_id": run_id}
 
-                    result = app.invoke(
+                    result = run_tick_workflow(
+                        app,
                         tick_input,
-                        config=config_dict
+                        config_dict
                     )
                     
                     duration_ms = (time.time() - start_time) * 1000
@@ -291,13 +297,9 @@ def main():
                     
                     logger.info(f"\n{mode_emoji} [{mode_name}] Tick complete.")
                     
-                    # 定期保存仪表盘快照
-                    if tick_count % 10 == 0:
-                        dashboard.save_snapshot()
-                    
-                    # 定期打印仪表盘（可选）
+                    # 定期打印状态 (或可以通过 dashboard 自动处理)
                     if tick_count % 20 == 0:
-                        dashboard.print_dashboard()
+                        logger.info(f"📊 System check: {tick_count} ticks processed, currently {current_status}")
                     
                 except Exception as e:
                     logger.exception(f"❌ Tick failed: {e}")

@@ -28,7 +28,7 @@ class DashboardMetrics:
         
         # 实时指标
         self.heartbeat_count = 0
-        self.last_heartbeat = datetime.now()
+        self.last_heartbeat = datetime.now(timezone.utc)
         
         # 交易统计
         self.total_trades = 0
@@ -60,7 +60,7 @@ class DashboardMetrics:
 
     def update_heartbeat(self):
         self.heartbeat_count += 1
-        self.last_heartbeat = datetime.now()
+        self.last_heartbeat = datetime.now(timezone.utc)
         self._emit_sync("system_update", {"heartbeat": self.heartbeat_count})
     
     def record_trade(self, pnl: float, win: bool):
@@ -81,7 +81,7 @@ class DashboardMetrics:
             self.max_drawdown = drawdown
 
         entry = {
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "pnl": pnl,
             "cumulative_pnl": self.total_pnl,
             "peak_pnl": self.peak_pnl,
@@ -92,7 +92,7 @@ class DashboardMetrics:
     
     def record_execution_time(self, component: str, duration_ms: float):
         entry = {
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "component": component,
             "duration_ms": duration_ms
         }
@@ -115,14 +115,14 @@ class DashboardMetrics:
     def record_error(self, error: str):
         self.error_count += 1
         self.last_error = {
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "error": error
         }
         self._emit_sync("error_added", self.last_error)
     
     def get_dashboard_data(self) -> dict:
         return {
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "system": {
                 "status": self.current_status,
                 "heartbeat_count": self.heartbeat_count,
@@ -202,6 +202,88 @@ async def get_metrics():
     logger.info("📊 Metrics requested via REST API")
     return get_dashboard().get_dashboard_data()
 
+
+@app.get("/graph")
+async def get_graph_structure():
+    """Return the LangGraph supervisor structure for visualization."""
+    from .supervisor_graph import build_trading_supervisor
+    
+    try:
+        # Build the graph and get its structure with xray enabled
+        graph = build_trading_supervisor()
+        drawable = graph.get_graph(xray=True)
+        
+        # Convert to ReactFlow-compatible format
+        nodes = []
+        edges = []
+        
+        # Track subgraph membership for grouping
+        subgraph_map: dict[str, str] = {}  # node_id -> subgraph_name
+        
+        for node_id, node in drawable.nodes.items():
+            # Skip __start__ and __end__ for cleaner visualization
+            if node_id in ("__start__", "__end__"):
+                continue
+            
+            # Parse subgraph nodes (format: "subgraph:node_name")
+            if ":" in node_id:
+                parts = node_id.split(":", 1)
+                subgraph_name = parts[0]
+                node_name = parts[1]
+                subgraph_map[node_id] = subgraph_name
+                
+                # Skip internal __start__/__end__ nodes of subgraphs
+                if node_name in ("__start__", "__end__"):
+                    continue
+                
+                label = node_name.replace("_", " ").title()
+            else:
+                label = node_id.replace("_", " ").title()
+            
+            nodes.append({
+                "id": node_id,
+                "label": label,
+                "subgraph": subgraph_map.get(node_id),
+            })
+        
+        for edge in drawable.edges:
+            source = edge.source
+            target = edge.target
+            
+            # Skip edges from/to __start__/__end__
+            if source in ("__start__", "__end__") or target in ("__start__", "__end__"):
+                # Map __start__ edges to first real node
+                if source == "__start__":
+                    continue
+                if target == "__end__":
+                    continue
+            
+            # Skip internal subgraph __start__/__end__ edges
+            if source.endswith(":__start__") or source.endswith(":__end__"):
+                continue
+            if target.endswith(":__start__") or target.endswith(":__end__"):
+                continue
+            
+            edges.append({
+                "id": f"e-{source}-{target}",
+                "source": source,
+                "target": target,
+                "conditional": edge.conditional,
+                "label": edge.data if edge.data else None,
+            })
+        
+        # Get unique subgraphs for grouping info
+        subgraphs = list(set(subgraph_map.values()))
+        
+        return {
+            "nodes": nodes,
+            "edges": edges,
+            "subgraphs": subgraphs,
+        }
+    except Exception as e:
+        logger.error(f"Error getting graph structure: {e}")
+        return {"error": str(e), "nodes": [], "edges": [], "subgraphs": []}
+
 @app.get("/history/runs")
 async def get_history_runs(
     start_date: str | None = None,
@@ -271,7 +353,7 @@ async def websocket_endpoint(websocket: WebSocket):
         await websocket.send_json({
             "type": "initial_state",
             "data": get_dashboard().get_dashboard_data(),
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat()
         })
         
         while True:
@@ -316,11 +398,11 @@ async def startup_event():
         
         # Persist to database for rehydration after restart
         try:
-            logger.debug(f"🔍 Attempting to persist event: type={event.get('type')}, node={(event.get('data') or {}).get('node')}")
+            # logger.debug(f"🔍 Attempting to persist event: type={event.get('type')}, node={(event.get('data') or {}).get('node')}")
             from .database.persistence_manager import get_persistence_manager
             with get_persistence_manager() as pm:
                 pm.store_dashboard_event(event)
-            logger.debug(f"✅ Event persisted successfully")
+            # logger.debug(f"✅ Event persisted successfully")
         except Exception as e:
             logger.warning(f"⚠️ Failed to persist dashboard event: {e}")
             import traceback

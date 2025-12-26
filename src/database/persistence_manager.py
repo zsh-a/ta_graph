@@ -38,17 +38,17 @@ class PersistenceManager:
             try:
                 if exc_type is None:
                     # Flush changes to database and commit
-                    logger.info(f"PersistenceManager.__exit__: Flushing session (new={len(self._db.new)}, dirty={len(self._db.dirty)}, deleted={len(self._db.deleted)})")
+                    # logger.info(f"PersistenceManager.__exit__: Flushing session (new={len(self._db.new)}, dirty={len(self._db.dirty)}, deleted={len(self._db.deleted)})")
                     self._db.flush()
-                    logger.info(f"PersistenceManager.__exit__: Committing session")
+                    # logger.info(f"PersistenceManager.__exit__: Committing session")
                     self._db.commit()
-                    logger.info(f"PersistenceManager.__exit__: Commit successful")
+                    # logger.info(f"PersistenceManager.__exit__: Commit successful")
                 else:
                     # Rollback on exception
-                    logger.warning(f"PersistenceManager.__exit__: Rolling back due to exception: {exc_type}")
+                    # logger.warning(f"PersistenceManager.__exit__: Rolling back due to exception: {exc_type}")
                     self._db.rollback()
             finally:
-                logger.info(f"PersistenceManager.__exit__: Closing session")
+                # logger.info(f"PersistenceManager.__exit__: Closing session")
                 self._db.close()
 
     def create_run(

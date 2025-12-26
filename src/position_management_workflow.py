@@ -2,12 +2,15 @@
 持仓管理 LangGraph Workflow
 
 整合所有持仓管理模块的完整工作流
+使用统一的TradingState，支持作为subgraph直接添加到supervisor graph
 """
 
-from typing import Literal, TypedDict
+from typing import Literal, Optional
 from langgraph.graph import StateGraph, END
+from langgraph.graph.state import CompiledStateGraph
 from datetime import datetime
 
+from .state import TradingState
 from .nodes.order_monitor import monitor_pending_order, confirm_order_fill
 from .nodes.position_sync import sync_position_state, check_position_health
 from .nodes.followthrough_analyzer import analyze_followthrough
@@ -18,67 +21,51 @@ from .logger import get_logger
 logger = get_logger(__name__)
 
 
-class PositionManagementState(TypedDict):
-    """持仓管理状态定义"""
+# 使用统一的TradingState，不再需要单独定义PositionManagementState
+# TradingState已包含所有持仓管理需要的字段
+
+# 单例模式 - 编译好的 position management subgraph
+_position_management_subgraph: Optional[CompiledStateGraph] = None
+
+
+def get_position_management_subgraph() -> CompiledStateGraph:
+    """
+    获取编译好的 Position Management Subgraph（单例模式）
     
-    # 市场数据
-    symbol: str
-    exchange: str
-    bars: list[dict]
-    current_bar: dict
-    current_bar_index: int
-    timeframe: int
+    使用统一的TradingState，可以直接作为subgraph添加到supervisor graph
     
-    # 系统状态
-    status: Literal["looking_for_trade", "order_pending", "managing_position"]
+    Returns:
+        编译好的 Position Management Graph
+    """
+    global _position_management_subgraph
     
-    # 订单信息
-    pending_order_id: str | None
-    order_placed_time: datetime | None
-    stop_loss_order_id: str | None
+    if _position_management_subgraph is None:
+        logger.info("Creating Position Management Subgraph (singleton)...")
+        workflow = create_position_management_workflow()
+        _position_management_subgraph = workflow.compile()
+        logger.info("✓ Position Management Subgraph created")
     
-    # 持仓信息
-    position: dict | None  # {side, entry_price, size, unrealized_pnl, leverage}
-    entry_bar_index: int | None
-    stop_loss: float | None
-    take_profit: float | None
-    breakeven_locked: bool
-    
-    # Follow-through 分析
-    followthrough_checked: bool
-    last_followthrough_analysis: dict | None
-    should_exit: bool
-    
-    # 风控与安全
-    conviction_tracker: ConvictionTracker | None
-    account_balance: float
-    
-    # 其他
-    run_id: str | None
-    error: str | None
-    exit_reason: str | None
+    return _position_management_subgraph
 
 
 def create_position_management_workflow() -> StateGraph:
     """
     创建持仓管理工作流
     
-    实现双环架构：
-    - Loop A: Hunting Mode（寻找交易机会）
-    - Loop B: Managing Mode（持仓管理）
+    使用统一的TradingState，可以直接作为subgraph添加到supervisor graph
     
     Returns:
-        LangGraph StateGraph
+        LangGraph StateGraph (未编译)
     """
     
-    # 创建 Graph
-    workflow = StateGraph(PositionManagementState)
+    # 创建 Graph - 使用统一的TradingState
+    workflow = StateGraph(TradingState)
     
     # ========== Loop B: Managing Mode 节点 ==========
     
     # 1. 订单监控
     workflow.add_node("monitor_order", monitor_pending_order)
-    workflow.add_node("confirm_fill", confirm_order_fill)
+    # Note: confirm_fill is not used in current flow, removed to fix subgraph visualization
     
     # 2. 持仓状态对账
     workflow.add_node("sync_position", sync_position_state)
@@ -96,7 +83,7 @@ def create_position_management_workflow() -> StateGraph:
     
     # ========== 条件边：状态路由 ==========
     
-    def route_by_status(state: PositionManagementState) -> str:
+    def route_by_status(state: TradingState) -> str:
         """根据状态路由到下一个节点"""
         status = state.get("status", "looking_for_trade")
         
@@ -107,14 +94,14 @@ def create_position_management_workflow() -> StateGraph:
         else:  # looking_for_trade
             return END
     
-    def route_after_monitor(state: PositionManagementState) -> str:
+    def route_after_monitor(state: TradingState) -> str:
         """订单监控后的路由"""
         if state.get("status") == "managing_position":
             return "sync_position"
         else:
             return END
     
-    def route_after_stop_check(state: PositionManagementState) -> str:
+    def route_after_stop_check(state: TradingState) -> str:
         """止损检查后的路由"""
         # 持仓管理完成，返回主循环
         return END
@@ -158,32 +145,30 @@ def create_position_management_workflow() -> StateGraph:
 
 
 
-def perform_safety_check(state: PositionManagementState) -> PositionManagementState:
+def perform_safety_check(state: TradingState) -> dict:
     """
     执行安全检查
     
     1. 检查 Equity Protector（是否允许交易）
     2. 检查 Conviction Tracker（信念是否足够）
+    
+    Returns:
+        dict: 状态更新
     """
     # 1. Equity Protector 检查
     equity_protector = get_equity_protector()
     
     if not equity_protector.can_trade():
         logger.warning("🛑 Trading disabled by Equity Protector")
-        state["status"] = "looking_for_trade"
-        state["error"] = "Trading disabled by equity protector"
-        return state
+        return {
+            "status": "looking_for_trade",
+            "errors": state.get("errors", []) + ["Trading disabled by equity protector"]
+        }
     
     # 2. Conviction Tracker（如果在决策阶段）
-    if state.get("pending_decision"):
-        decision = state["pending_decision"]
-        
-        if not check_hallucination_guard(state, decision):
-            logger.warning("🛑 Decision blocked by hallucination guard")
-            state["pending_decision"] = None
-            return state
+    # 注：TradingState中没有pending_decision字段，这里跳过
     
-    return state
+    return {}
 
 
 # ========== 使用示例 ==========

@@ -252,6 +252,8 @@ IMPORTANT: Respect the Brooks analysis. If it says "wait", you should strongly c
     
     # ========== Call LLM ==========
     
+    # Use DeepSeek Reasoner with thinking mode for strategy generation
+    # llm = get_llm("deepseek_reasoner")
     llm = get_llm()
     structured_llm = llm.with_structured_output(DecisionResponse)
     

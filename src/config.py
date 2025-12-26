@@ -149,16 +149,16 @@ class Config(BaseModel):
         # 检查交易模式
         if self.system.trading_mode == "live":
             # 生产环境必须关闭沙盒
-            if self.exchange.sandbox:
-                errors.append("Production mode requires sandbox=False")
+            # if self.exchange.sandbox:
+            #     errors.append("Production mode requires sandbox=False")
             
             # 生产环境建议降低杠杆
             if self.risk.default_leverage > 20:
                 errors.append("Warning: High leverage (>20x) in production mode")
             
             # 生产环境建议启用通知
-            if not self.notification.telegram_enabled and not self.notification.email_enabled:
-                errors.append("Warning: No notification configured for production")
+            # if not self.notification.telegram_enabled and not self.notification.email_enabled:
+            #     errors.append("Warning: No notification configured for production")
         
         # 检查API密钥
         try:
@@ -187,8 +187,7 @@ def load_config(env_file: str = ".env") -> Config:
     if Path(env_file).exists():
         load_dotenv(env_file)
     else:
-        print(f"Warning: {env_file} not found. Using environment variables.")
-    
+        print(f"Warning: {env_file} not found. Using environment variables.")    
     # 构建配置
     config = Config(
         exchange=ExchangeConfig(

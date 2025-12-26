@@ -1,7 +1,8 @@
 """
 统一的交易状态定义
 
-用于LangGraph Supervisor架构
+用于LangGraph Supervisor架构和Analysis Graph
+合并了原 TradingState 和 AgentState
 """
 
 from typing import TypedDict, Optional, List, Any
@@ -10,8 +11,9 @@ from datetime import datetime
 
 class TradingState(TypedDict, total=False):
     """
-    完整的交易系统状态
+    统一的交易系统状态
     
+    合并了 Supervisor Graph 和 Analysis Graph 的所有字段
     使用TypedDict确保类型安全，total=False允许部分字段可选
     """
     
@@ -25,20 +27,25 @@ class TradingState(TypedDict, total=False):
     symbol: str
     exchange: str
     timeframe: int  # 分钟
+    primary_timeframe: str  # 字符串格式 (e.g., "15m", "1h") - 兼容 AgentState
     
     # ========== 市场数据 ==========
     bars: List[dict]
     current_bar: Optional[dict]
     current_bar_index: int
     current_price: float
+    market_data: Optional[dict]  # 兼容 AgentState
+    market_states: Optional[List[dict]]  # 多时间框架数据
     
     # ========== 分析结果 ==========
     market_analysis: Optional[dict]
     brooks_analysis: Optional[dict]
     decisions: Optional[List[dict]]
     
-    # ========== 持仓信息 ==========
-    position: Optional[dict]  # {"side": "long/short", "entry_price": float, "size": float, ...}
+    # ========== 账户与持仓 ==========
+    account_info: dict  # 兼容 AgentState
+    positions: dict  # 兼容 AgentState: {symbol: position_dict}
+    position: Optional[dict]  # 单个持仓: {"side": "long/short", "entry_price": float, "size": float, ...}
     entry_bar_index: Optional[int]
     stop_loss: Optional[float]
     take_profit: Optional[float]
@@ -66,30 +73,18 @@ class TradingState(TypedDict, total=False):
     
     # ========== 执行结果 ==========
     execution_results: Optional[List[dict]]
+    execution_metadata: Optional[dict]  # 执行跟踪元数据
     last_trade_pnl: Optional[float]
     
     # ========== 元数据 ==========
-    messages: List[str]  # 日志消息
+    messages: List[Any]  # 日志消息
     errors: List[str]  # 错误记录
+    warnings: Optional[List[str]]  # 警告信息
 
 
-class AgentState(TypedDict, total=False):
-    """
-    兼容旧的AgentState定义（用于analysis graph）
-    """
-    symbol: str
-    primary_timeframe: str
-    messages: List[Any]
-    positions: dict
-    account_info: dict
-    market_data: Optional[dict]
-    market_states: Optional[List[dict]]  # Added for P0 fix
-    market_analysis: Optional[dict]
-    brooks_analysis: Optional[dict]
-    decisions: Optional[List[dict]]
-    execution_results: Optional[List[dict]]
-    bars: List[dict]
-    current_bar: Optional[dict]
-    warnings: Optional[List[str]]  # Added for execution visibility
-    execution_metadata: Optional[dict]  # Added for execution tracking
-    run_id: Optional[str]  # Added for persistence link
+# ========== 类型别名（向后兼容）==========
+
+# AgentState 现在是 TradingState 的别名
+# 所有使用 AgentState 的代码无需修改
+AgentState = TradingState
+

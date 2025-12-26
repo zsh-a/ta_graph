@@ -6,26 +6,17 @@
 """
 
 from datetime import datetime, timedelta
-from typing import TypedDict, Literal
 from ..trading.exchange_client import get_client
 from ..logger import get_logger
 from ..utils.event_bus import get_event_bus
+from ..state import TradingState
 
 logger = get_logger(__name__)
 bus = get_event_bus()
 
+# 使用统一的TradingState，不再需要本地定义AgentState
 
-class AgentState(TypedDict):
-    """Agent 状态定义（部分）"""
-    status: Literal["looking_for_trade", "order_pending", "managing_position"]
-    symbol: str
-    pending_order_id: str | None
-    order_placed_time: datetime | None
-    current_bar: dict
-    timeframe: int  # 分钟数
-
-
-def monitor_pending_order(state: AgentState) -> AgentState:
+def monitor_pending_order(state: TradingState) -> dict:
     """
     监控挂单状态
     
@@ -159,7 +150,7 @@ def monitor_pending_order(state: AgentState) -> AgentState:
     return state
 
 
-def confirm_order_fill(state: AgentState) -> AgentState:
+def confirm_order_fill(state: TradingState) -> dict:
     """
     确认订单成交并更新状态
     

@@ -1,6 +1,6 @@
 import React from 'react';
 import { useStore } from '../store';
-import { Target, Shield, Zap, ArrowUpRight, ArrowDownRight, Activity } from 'lucide-react';
+import { Target, Shield, ArrowUpRight, ArrowDownRight, Activity } from 'lucide-react';
 
 export const PositionDisplay: React.FC = () => {
     const { trading } = useStore();

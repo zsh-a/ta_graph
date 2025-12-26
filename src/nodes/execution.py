@@ -264,7 +264,7 @@ def execute_trade(state: AgentState) -> dict:
         if is_live and client:
             # Real execution
             try:
-                if side_val.lower() == "buy":
+                if side_val.lower() in ["buy", "long"]:
                     result = execute_buy_order(
                         client=client,
                         symbol=symbol_val,
@@ -274,7 +274,7 @@ def execute_trade(state: AgentState) -> dict:
                         take_profit=tp_val,
                         leverage=lev_val
                     )
-                else: # Assuming anything not "buy" is a "sell" for this context
+                elif side_val.lower() in ["sell", "short"]:
                     result = execute_sell_order(
                         client=client,
                         symbol=symbol_val,
@@ -284,6 +284,12 @@ def execute_trade(state: AgentState) -> dict:
                         take_profit=tp_val,
                         leverage=lev_val
                     )
+                else:
+                    logger.error(f"❌ Unknown trade side: {side_val}")
+                    plan["execution_status"] = "FAILED"
+                    plan["error"] = f"Unknown trade side: {side_val}"
+                    results.append(plan)
+                    continue
                 
                 # Update plan with results
                 plan["execution_id"] = result.order_id
