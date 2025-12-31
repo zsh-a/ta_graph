@@ -287,3 +287,143 @@ Order {i}:
         output += "No open orders.\n"
     
     return output
+
+
+def get_exchange_order_history(
+    symbol: Optional[str] = None,
+    start_date: Optional[datetime] = None,
+    limit: int = 100
+) -> Dict[str, Any]:
+    """
+    Fetch order history directly from exchange API
+    """
+    from ..trading.exchange_client import get_client
+    
+    client = get_client()
+    since = int(start_date.timestamp() * 1000) if start_date else None
+    
+    orders = client.fetch_orders(symbol=symbol, since=since, limit=limit)
+    
+    # Calculate stats from exchange orders
+    # Note: Exchange orders might not have PnL directly in fetch_orders for all exchanges.
+    # CCXT's fetch_orders typically returns order status and filled/remaining.
+    # We might need to fetch trades or look at 'profit' in order info if available.
+    
+    total_trades = len(orders)
+    winning_trades = sum(1 for o in orders if o.status == 'closed' and o.filled > 0) # Placeholder logic
+    losing_trades = 0
+    total_pnl = 0.0
+    
+    # Try to extract more info if available in 'info' or similar (though OrderResult is simplified)
+    # For now, providing a structured response consistent with local history
+    
+    return {
+        "stats": {
+            "total_trades": total_trades,
+            "winning_trades": winning_trades,
+            "losing_trades": losing_trades,
+            "total_pnl": total_pnl,
+            "win_rate": (winning_trades / total_trades * 100) if total_trades > 0 else 0.0
+        },
+        "orders": [{
+            "id": o.id,
+            "symbol": o.symbol,
+            "operation": o.side.capitalize(),
+            "pricing": o.price,
+            "amount": o.amount,
+            "status": o.status,
+            "createdAt": o.order_placed_time.isoformat() if o.order_placed_time else None,
+            "pnl": None, # Complex to get from single fetch_orders call
+            "outcome": "closed" if o.status == 'closed' else "open"
+        } for o in orders],
+        "total": total_trades,
+        "page": 1,
+        "limit": limit
+    }
+
+def get_order_history(
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
+    symbol: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0,
+    source: str = 'local',
+    db: Optional[Session] = None
+) -> Dict[str, Any]:
+    """
+    Get order history with statistics from specified source
+    """
+    if source == 'exchange':
+        return get_exchange_order_history(symbol=symbol, start_date=start_date, limit=limit)
+        
+    should_close = False
+    if db is None:
+        db = get_session()
+        should_close = True
+    
+    try:
+        # Build query for Trading
+        query = db.query(Trading)
+        
+        if start_date:
+            query = query.filter(Trading.createdAt >= start_date)
+        if end_date:
+            query = query.filter(Trading.createdAt <= end_date)
+        if symbol:
+            try:
+                sym_enum = SymbolType(symbol)
+                query = query.filter(Trading.symbol == sym_enum)
+            except ValueError:
+                 pass
+
+        total_count = query.count()
+        trades = query.order_by(desc(Trading.createdAt)).limit(limit).offset(offset).all()
+        
+        stats_query = db.query(TradingLesson).join(Trading)
+        if start_date:
+            stats_query = stats_query.filter(Trading.createdAt >= start_date)
+        if end_date:
+            stats_query = stats_query.filter(Trading.createdAt <= end_date)
+        if symbol:
+            try:
+                sym_enum = SymbolType(symbol)
+                stats_query = stats_query.filter(Trading.symbol == sym_enum)
+            except ValueError:
+                pass
+                
+        lessons = stats_query.all()
+        
+        total_trades_count = len(lessons)
+        winning_trades = sum(1 for l in lessons if l.pnl > 0)
+        losing_trades = sum(1 for l in lessons if l.pnl <= 0)
+        total_pnl = sum(l.pnl for l in lessons)
+        win_rate = (winning_trades / total_trades_count * 100) if total_trades_count > 0 else 0.0
+        
+        return {
+            "stats": {
+                "total_trades": total_trades_count,
+                "winning_trades": winning_trades,
+                "losing_trades": losing_trades,
+                "total_pnl": total_pnl,
+                "win_rate": win_rate
+            },
+            "orders": [{
+                "id": str(trade.id),
+                "symbol": trade.symbol.value,
+                "operation": trade.operation.value,
+                "pricing": trade.pricing,
+                "amount": trade.amount,
+                "riskAmount": trade.riskAmount,
+                "createdAt": trade.createdAt.isoformat(),
+                "pnl": next((l.pnl for l in trade.lessons), None),
+                "outcome": next((l.outcome for l in trade.lessons), None)
+            } for trade in trades],
+            "total": total_count,
+            "page": (offset // limit) + 1,
+            "limit": limit
+        }
+        
+    finally:
+        if should_close:
+            db.close()
+

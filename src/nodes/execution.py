@@ -27,16 +27,19 @@ class TradeResult:
     order_id: str | None
     executed_price: float | None
     executed_amount: float | None
+    status: str | None
     error: str | None
 
     def __init__(self, success: bool, order_id: str | None = None, 
                  executed_price: float | None = None, 
                  executed_amount: float | None = None,
+                 status: str | None = None,
                  error: str | None = None):
         self.success = success
         self.order_id = order_id
         self.executed_price = executed_price
         self.executed_amount = executed_amount
+        self.status = status
         self.error = error
 
 
@@ -86,7 +89,8 @@ def execute_buy_order(
             success=True,
             order_id=order.id,
             executed_price=order.price,
-            executed_amount=order.filled
+            executed_amount=order.filled,
+            status=order.status
         )
         
     except Exception as e:
@@ -126,7 +130,8 @@ def execute_sell_order(
             success=True,
             order_id=order.id,
             executed_price=order.price,
-            executed_amount=order.filled
+            executed_amount=order.filled,
+            status=order.status
         )
         
     except Exception as e:
@@ -142,8 +147,17 @@ def save_trade_to_database(
     """Save successful trade to database"""
     try:
         # Map symbol string to SymbolType enum
-        symbol_str = plan.get('symbol', 'BTC')
-        symbol_enum = SymbolType[symbol_str] if hasattr(SymbolType, symbol_str) else SymbolType.BTC
+        symbol_str = plan.get('trading_symbol') or plan.get('symbol', 'BTC')
+        
+        # Extract base currency (e.g., "ETH" from "ETH/USDT")
+        base_symbol = symbol_str.split('/')[0] if '/' in symbol_str else symbol_str
+        
+        # Map to SymbolType enum
+        try:
+            symbol_enum = SymbolType[base_symbol]
+        except KeyError:
+            logger.warning(f"⚠️  Symbol {base_symbol} not found in SymbolType enum, defaulting to BTC")
+            symbol_enum = SymbolType.BTC
         
         # Map operation to OperationType
         operation_str = plan.get('operation', 'Buy')
@@ -192,7 +206,8 @@ def execute_trade(state: AgentState) -> dict:
             f"This indicates a failure in the risk assessment or execution planning stage."
         )
         logger.critical(error_msg)
-        warnings_list.append(error_msg)
+        if error_msg not in warnings_list:
+            warnings_list.append(error_msg)
     
     if not execution_plans:
         logger.info("No execution plans to process.")
@@ -293,7 +308,19 @@ def execute_trade(state: AgentState) -> dict:
                 
                 # Update plan with results
                 plan["execution_id"] = result.order_id
-                plan["execution_status"] = "FILLED" if result.success else "FAILED"
+                plan["order_id"] = result.order_id  # Alias for supervisor graph
+                
+                # Use real status from order if available, fallback to FILLED if success but status unknown
+                exec_status = "FILLED"
+                if result.success:
+                    if result.status:
+                        exec_status = result.status.upper()
+                    else:
+                        exec_status = "FILLED"
+                else:
+                    exec_status = "FAILED"
+                
+                plan["execution_status"] = exec_status
                 plan["executed_price"] = result.executed_price
                 plan["executed_amount"] = result.executed_amount
                 plan["error"] = result.error
@@ -344,11 +371,36 @@ def execute_trade(state: AgentState) -> dict:
         else:
             # Simulation mode
             logger.info("  [SIMULATION] Order placed successfully")
-            plan["execution_id"] = f"sim_{symbol_val.replace('/', '_')}_{int(datetime.now().timestamp())}"
+            sim_id = f"sim_{symbol_val.replace('/', '_')}_{int(datetime.now().timestamp())}"
+            plan["execution_id"] = sim_id
+            plan["order_id"] = sim_id # Alias for supervisor graph
             plan["execution_status"] = "FILLED"
             plan["executed_price"] = entry_val
             plan["executed_amount"] = amount_val
             
+            # CRITICAL: Update mock account state for simulation
+            try:
+                from ..database.account_manager import get_account_manager
+                am = get_account_manager()
+                if am.use_mock:
+                    am.add_mock_position({
+                        "symbol": symbol_val,
+                        "side": side_val.lower(),
+                        "size": amount_val,
+                        "entry_price": entry_val,
+                        "mark_price": entry_val,
+                        "unrealized_pnl": 0.0,
+                        "leverage": lev_val,
+                        "margin_type": "isolated",
+                        "stop_loss": sl_val,
+                        "take_profit": tp_val
+                    })
+                    # Update balance
+                    new_available = am.mock_available - (amount_val * entry_val / lev_val)
+                    am.update_balance(am.mock_balance, new_available)
+            except Exception as mock_err:
+                logger.warning(f"⚠️  Failed to update mock account state: {mock_err}")
+
             # Save to legacy database even in simulation
             result = TradeResult(
                 success=True,

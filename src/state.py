@@ -5,8 +5,7 @@
 合并了原 TradingState 和 AgentState
 """
 
-from typing import TypedDict, Optional, List, Any
-from datetime import datetime
+from typing import TypedDict, Any
 
 
 class TradingState(TypedDict, total=False):
@@ -21,39 +20,40 @@ class TradingState(TypedDict, total=False):
     status: str  # 'looking_for_trade', 'order_pending', 'managing_position', 'cooldown', 'halted'
     loop_count: int
     last_update: str  # ISO格式时间戳
-    run_id: Optional[str]  # Database run ID for persistence
-    
-    # ========== 配置信息 ==========
-    symbol: str
-    exchange: str
-    timeframe: int  # 分钟
-    primary_timeframe: str  # 字符串格式 (e.g., "15m", "1h") - 兼容 AgentState
-    
-    # ========== 市场数据 ==========
-    bars: List[dict]
-    current_bar: Optional[dict]
+    # Base indicators
+    bars: list[dict[str, Any]]
+    current_bar: dict[str, Any] | None
     current_bar_index: int
-    current_price: float
-    market_data: Optional[dict]  # 兼容 AgentState
-    market_states: Optional[List[dict]]  # 多时间框架数据
+    entry_bar_index: int
+    symbol: str
+    timeframe: str
+    exchange: str
     
-    # ========== 分析结果 ==========
-    market_analysis: Optional[dict]
-    brooks_analysis: Optional[dict]
-    decisions: Optional[List[dict]]
+    # Market analysis
+    market_data: dict[str, Any]
+    market_states: dict[str, Any]
+    market_analysis: dict[str, Any]
+    brooks_analysis: dict[str, Any]
+    decisions: list[dict[str, Any]]
     
-    # ========== 账户与持仓 ==========
-    account_info: dict  # 兼容 AgentState
-    positions: dict  # 兼容 AgentState: {symbol: position_dict}
-    position: Optional[dict]  # 单个持仓: {"side": "long/short", "entry_price": float, "size": float, ...}
-    entry_bar_index: Optional[int]
-    stop_loss: Optional[float]
-    take_profit: Optional[float]
-    breakeven_locked: bool
+    # Account & Position
+    account_info: dict[str, Any]
+    positions: list[dict[str, Any]]
+    position: dict[str, Any] | None
     
-    # ========== 订单信息 ==========
-    pending_order_id: Optional[str]
-    order_placed_time: Optional[str]
+    # Strategy & Execution
+    last_followthrough_analysis: dict[str, Any] | None
+    execution_results: list[dict[str, Any]]
+    execution_metadata: dict[str, Any]
+    
+    # Flow control
+    pending_order_id: str | None
+    order_placed_time: str | None
+    next_node: str | None
+    
+    # Error & Cancel
+    cancel_reason: str | None
+    error: str | None
     
     # ========== 风险管理 ==========
     account_balance: float
@@ -64,22 +64,19 @@ class TradingState(TypedDict, total=False):
     
     # ========== Follow-through分析 ==========
     followthrough_checked: bool
-    last_followthrough_analysis: Optional[dict]
     
     # ========== 内部决策信号 ==========
-    next_action: Optional[str]  # 'scan', 'manage', 'sleep', 'halt'
-    exit_reason: Optional[str]
+    next_action: str | None  # 'scan', 'manage', 'sleep', 'halt'
+    exit_reason: str | None
     should_exit: bool
     
     # ========== 执行结果 ==========
-    execution_results: Optional[List[dict]]
-    execution_metadata: Optional[dict]  # 执行跟踪元数据
-    last_trade_pnl: Optional[float]
+    last_trade_pnl: float | None
     
     # ========== 元数据 ==========
-    messages: List[Any]  # 日志消息
-    errors: List[str]  # 错误记录
-    warnings: Optional[List[str]]  # 警告信息
+    messages: list[Any]  # 日志消息
+    errors: list[str]  # 错误记录
+    warnings: list[str] | None  # 警告信息
 
 
 # ========== 类型别名（向后兼容）==========
@@ -87,4 +84,3 @@ class TradingState(TypedDict, total=False):
 # AgentState 现在是 TradingState 的别名
 # 所有使用 AgentState 的代码无需修改
 AgentState = TradingState
-

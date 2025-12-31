@@ -11,7 +11,7 @@ from langgraph.graph.state import CompiledStateGraph
 from datetime import datetime
 
 from .state import TradingState
-from .nodes.order_monitor import monitor_pending_order, confirm_order_fill
+from .nodes.order_monitor import monitor_pending_order
 from .nodes.position_sync import sync_position_state, check_position_health
 from .nodes.followthrough_analyzer import analyze_followthrough
 from .nodes.risk_manager import manage_risk, check_stop_hit

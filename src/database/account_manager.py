@@ -154,7 +154,8 @@ class AccountManager:
                     "amount": o.amount,
                     "status": o.status,
                     "filled": o.filled,
-                    "remaining": o.remaining
+                    "remaining": o.remaining,
+                    "timestamp": getattr(o, "timestamp", None)
                 }
                 for o in orders_list
             ]

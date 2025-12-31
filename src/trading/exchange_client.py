@@ -1,11 +1,13 @@
 """
 Exchange Client Module
+Exchange Client Module
 Ported from Super-nof1.ai/lib/trading/exchange-client.ts
 Provides unified interface for exchange operations using CCXT
 """
 
 import os
-from typing import List, Dict, Any, Optional
+from datetime import datetime, timezone
+from typing import Any, override
 from dataclasses import dataclass
 from abc import ABC, abstractmethod
 import ccxt
@@ -22,7 +24,7 @@ def normalize_symbol(symbol: str, exchange_id: str = "bitget") -> str:
     Normalize trading symbol for exchange-specific format
     
     Args:
-        symbol: Symbol like "BTC/USDT" or "BTC/USDT:USDT"
+        symbol: Symbol like "BTC/USDT" or "BTC/USDT"
         exchange_id: Exchange name (bitget, binance, etc.)
         
     Returns:
@@ -60,13 +62,14 @@ class Position:
     symbol: str
     side: str  # "long" or "short"
     size: float
-    entry_price: float
     mark_price: float
     unrealized_pnl: float
     leverage: float
-    margin_type: str  # "isolated" or "cross"
-    stop_loss: Optional[float] = None
-    take_profit: Optional[float] = None
+    entry_price: float | None = 0.0
+    margin_type: str | None = "isolated"
+    liquidation_price: float | None = 0.0
+    stop_loss: float | None = None
+    take_profit: float | None = None
 
 
 @dataclass
@@ -80,6 +83,10 @@ class OrderResult:
     status: str
     filled: float
     remaining: float
+    timestamp: float | None = None
+    # New fields for order tracking
+    client_order_id: str | None = None
+    order_placed_time: datetime | None = None
 
 
 class ExchangeClient(ABC):
@@ -91,8 +98,8 @@ class ExchangeClient(ABC):
         pass
     
     @abstractmethod
-    def get_positions(self) -> List[Position]:
-        """Get all active positions"""
+    def get_positions(self) -> list[Position]:
+        """Fetch all current positions"""
         pass
     
     @abstractmethod
@@ -100,36 +107,47 @@ class ExchangeClient(ABC):
         self,
         symbol: str,
         side: str,  # "buy" or "sell"
-        order_type: str,  # "market", "limit", "stop_market", etc.
+        order_type: str,  # "market", "limit", etc.
         amount: float,
         price: float | None = None,
         reduce_only: bool = False,
         leverage: int | None = None,
         stop_loss_price: float | None = None,
         take_profit_price: float | None = None,
-        params: Dict[str, Any] | None = None
+        client_order_id: str | None = None,
+        params: dict[str, Any] | None = None,
     ) -> OrderResult:
-        """Place an order"""
+        """Place a new order"""
         pass
     
     @abstractmethod
-    def cancel_order(self, order_id: str, symbol: str) -> None:
-        """Cancel an order"""
+    def cancel_order(self, order_id: str, symbol: str) -> bool:
+        """Cancel an existing order"""
         pass
     
     @abstractmethod
-    def set_leverage(self, symbol: str, leverage: int) -> None:
+    def set_leverage(self, symbol: str, leverage: int) -> bool:
         """Set leverage for a symbol"""
         pass
     
     @abstractmethod
-    def fetch_ticker(self, symbol: str) -> Dict[str, float]:
-        """Fetch ticker data (last price, mark price)"""
+    def fetch_ticker(self, symbol: str) -> dict[str, Any]:
+        """Fetch current ticker/price for a symbol"""
         pass
     
     @abstractmethod
-    def get_open_orders(self, symbol: str | None = None) -> List[OrderResult]:
-        """Get open orders"""
+    def fetch_order(self, order_id: str, symbol: str) -> OrderResult:
+        """Fetch order details"""
+        pass
+
+    @abstractmethod
+    def get_open_orders(self, symbol: str | None = None) -> list[OrderResult]:
+        """Fetch all open orders"""
+        pass
+
+    @abstractmethod
+    def fetch_orders(self, symbol: str | None = None, since: int | None = None, limit: int | None = None) -> list[OrderResult]:
+        """Fetch historical orders from exchange"""
         pass
 
 
@@ -138,6 +156,8 @@ class CCXTExchangeClient(ExchangeClient):
     Exchange client implementation using CCXT
     Supports: Bitget, Binance
     """
+    exchange_id: str
+    exchange: Any
     
     def __init__(
         self,
@@ -167,7 +187,7 @@ class CCXTExchangeClient(ExchangeClient):
             raise ValueError(f"Exchange {exchange_id} not supported by ccxt")
         
         # Configure exchange
-        config: Dict[str, Any] = {
+        config: dict[str, Any] = {
             'apiKey': api_key,
             'secret': api_secret,
             'password': password,
@@ -185,7 +205,7 @@ class CCXTExchangeClient(ExchangeClient):
         
         self.exchange = exchange_class(config)
         logger.info(f"✓ Initialized {exchange_id} client ({'SANDBOX' if sandbox else 'LIVE'})")
-    
+    @override
     def get_account_info(self) -> Balance:
         """Get account balance information"""
         try:
@@ -204,7 +224,8 @@ class CCXTExchangeClient(ExchangeClient):
             logger.error(f"Failed to fetch account info: {e}")
             raise
     
-    def get_positions(self) -> List[Position]:
+    @override
+    def get_positions(self) -> list[Position]:
         """Get all active positions"""
         try:
             positions = self.exchange.fetch_positions()
@@ -229,6 +250,7 @@ class CCXTExchangeClient(ExchangeClient):
             logger.error(f"Failed to fetch positions: {e}")
             raise
     
+    @override
     def place_order(
         self,
         symbol: str,
@@ -240,7 +262,8 @@ class CCXTExchangeClient(ExchangeClient):
         leverage: int | None = None,
         stop_loss_price: float | None = None,
         take_profit_price: float | None = None,
-        params: Dict[str, Any] | None = None
+        client_order_id: str | None = None,
+        params: dict[str, Any] | None = None
     ) -> OrderResult:
         """Place an order"""
         try:
@@ -257,6 +280,8 @@ class CCXTExchangeClient(ExchangeClient):
             ccxt_params = params or {}
             if reduce_only:
                 ccxt_params['reduceOnly'] = True
+            if client_order_id:
+                ccxt_params['clientOrderId'] = client_order_id
             
             # Add SL/TP to params
             if stop_loss_price:
@@ -276,6 +301,10 @@ class CCXTExchangeClient(ExchangeClient):
             
             logger.info(f"✅ Order placed: {order['id']} | {side.upper()} {amount} {symbol} @ {price or 'MARKET'}")
             
+            order_placed_time = None
+            if order.get('timestamp'):
+                order_placed_time = datetime.fromtimestamp(order['timestamp'] / 1000, tz=timezone.utc)
+
             return OrderResult(
                 id=order['id'],
                 symbol=order['symbol'],
@@ -284,33 +313,45 @@ class CCXTExchangeClient(ExchangeClient):
                 amount=order['amount'],
                 status=order['status'],
                 filled=order.get('filled', 0.0),
-                remaining=order.get('remaining', 0.0)
+                remaining=order.get('remaining', 0.0),
+                timestamp=order.get('timestamp'),
+                client_order_id=order.get('clientOrderId'),
+                order_placed_time=order_placed_time
             )
         except Exception as e:
             logger.error(f"Failed to place order: {e}")
             raise
     
-    def cancel_order(self, order_id: str, symbol: str) -> None:
+    @override
+    def cancel_order(self, order_id: str, symbol: str) -> bool:
         """Cancel an order"""
         try:
+            symbol = normalize_symbol(symbol, self.exchange_id)
             self.exchange.cancel_order(order_id, symbol)
             logger.info(f"✅ Order canceled: {order_id}")
+            return True
         except Exception as e:
             logger.error(f"Failed to cancel order {order_id}: {e}")
-            raise
+            return False
     
-    def set_leverage(self, symbol: str, leverage: int) -> None:
+    @override
+    def set_leverage(self, symbol: str, leverage: int) -> bool:
         """Set leverage for a symbol"""
         try:
+            symbol = normalize_symbol(symbol, self.exchange_id)
             self.exchange.set_leverage(leverage, symbol)
             logger.info(f"✅ Leverage set to {leverage}x for {symbol}")
+            return True
         except Exception as e:
             # Some exchanges might not support this or already be at the leverage
             logger.warning(f"Could not set leverage for {symbol}: {e}")
+            return False
     
-    def fetch_ticker(self, symbol: str) -> Dict[str, float]:
+    @override
+    def fetch_ticker(self, symbol: str) -> dict[str, Any]:
         """Fetch ticker data"""
         try:
+            symbol = normalize_symbol(symbol, self.exchange_id)
             ticker = self.exchange.fetch_ticker(symbol)
             
             # Try to get mark price from info, fallback to last
@@ -325,10 +366,13 @@ class CCXTExchangeClient(ExchangeClient):
         except Exception as e:
             logger.error(f"Failed to fetch ticker for {symbol}: {e}")
             raise
-    
-    def get_open_orders(self, symbol: str | None = None) -> List[OrderResult]:
+
+    @override
+    def get_open_orders(self, symbol: str | None = None) -> list[OrderResult]:
         """Get open orders"""
         try:
+            if symbol:
+                symbol = normalize_symbol(symbol, self.exchange_id)
             orders = self.exchange.fetch_open_orders(symbol)
             
             return [
@@ -340,12 +384,79 @@ class CCXTExchangeClient(ExchangeClient):
                     amount=order['amount'],
                     status=order['status'],
                     filled=order.get('filled', 0.0),
-                    remaining=order.get('remaining', 0.0)
+                    remaining=order.get('remaining', 0.0),
+                    timestamp=order.get('timestamp'),
+                    client_order_id=order.get('clientOrderId'),
+                    order_placed_time=datetime.fromtimestamp(order['timestamp'] / 1000, tz=timezone.utc) if order.get('timestamp') else None
                 )
                 for order in orders
             ]
         except Exception as e:
             logger.error(f"Failed to fetch open orders: {e}")
+            raise
+
+    @override
+    def fetch_order(self, order_id: str, symbol: str) -> OrderResult:
+        """Fetch order details from CCXT and return OrderResult"""
+        try:
+            symbol = normalize_symbol(symbol, self.exchange_id)
+            order = self.exchange.fetch_order(order_id, symbol)
+            
+            order_placed_time = None
+            if order.get('timestamp'):
+                order_placed_time = datetime.fromtimestamp(order['timestamp'] / 1000, tz=timezone.utc)
+
+            return OrderResult(
+                id=order['id'],
+                symbol=order['symbol'],
+                side=order['side'],
+                price=order.get('price', 0.0),
+                amount=order.get('amount', 0.0),
+                status=order['status'],
+                filled=order.get('filled', 0.0),
+                remaining=order.get('remaining', 0.0),
+                timestamp=order.get('timestamp'),
+                client_order_id=order.get('clientOrderId'),
+                order_placed_time=order_placed_time
+            )
+        except Exception as e:
+            logger.error(f"Failed to fetch order {order_id} for {symbol}: {e}")
+            raise
+
+    @override
+    def fetch_orders(self, symbol: str | None = None, since: int | None = None, limit: int | None = None) -> list[OrderResult]:
+        """Fetch historical orders from exchange"""
+        try:
+            if symbol:
+                symbol = normalize_symbol(symbol, self.exchange_id)
+            
+            # Bitget doesn't support fetch_orders, use fetch_closed_orders instead
+            if self.exchange.has.get('fetchOrders'):
+                orders = self.exchange.fetch_orders(symbol, since, limit)
+            elif self.exchange.has.get('fetchClosedOrders'):
+                orders = self.exchange.fetch_closed_orders(symbol, since, limit)
+            else:
+                # Fallback to open orders if nothing else
+                orders = self.exchange.fetch_open_orders(symbol, since, limit)
+            
+            return [
+                OrderResult(
+                    id=order['id'],
+                    symbol=order['symbol'],
+                    side=order['side'],
+                    price=order.get('price') or order.get('average', 0.0),
+                    amount=order['amount'],
+                    status=order['status'],
+                    filled=order.get('filled', 0.0),
+                    remaining=order.get('remaining', 0.0),
+                    timestamp=order.get('timestamp'),
+                    client_order_id=order.get('clientOrderId'),
+                    order_placed_time=datetime.fromtimestamp(order['timestamp'] / 1000, tz=timezone.utc) if order.get('timestamp') else None
+                )
+                for order in orders
+            ]
+        except Exception as e:
+            logger.error(f"Failed to fetch orders history: {e}")
             raise
 
 

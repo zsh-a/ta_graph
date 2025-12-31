@@ -5,18 +5,19 @@
 如果挂单在当前 K 线收盘时未成交，则取消订单
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timezone
+from typing import cast
 from ..trading.exchange_client import get_client
 from ..logger import get_logger
 from ..utils.event_bus import get_event_bus
 from ..state import TradingState
 
+
 logger = get_logger(__name__)
 bus = get_event_bus()
 
-# 使用统一的TradingState，不再需要本地定义AgentState
 
-def monitor_pending_order(state: TradingState) -> dict:
+def monitor_pending_order(state: TradingState) -> TradingState:
     """
     监控挂单状态
     
@@ -28,49 +29,69 @@ def monitor_pending_order(state: TradingState) -> dict:
     Returns:
         更新后的状态
     """
-    if state["status"] != "order_pending":
+    if state.get("status") != "order_pending":
         return state
     
     order_id = state.get("pending_order_id")
-    if not order_id:
-        logger.warning("Status is order_pending but no order_id found")
+    symbol = state.get("symbol")
+    if not order_id or not symbol:
+        logger.warning(f"Status is order_pending but order_id={order_id} or symbol={symbol} missing")
         return {**state, "status": "looking_for_trade"}
     
-    order_time = state.get("order_placed_time")
-    if not order_time:
+    order_time_str = state.get("order_placed_time")
+    if not order_time_str:
         logger.warning("No order_placed_time found")
         return state
     
-    # 计算 K 线收盘时间
-    current_bar_close_time = state["current_bar"].get("close_time")
-    if not current_bar_close_time:
-        current_bar_close_time = datetime.now()
+    # Parse order time string back to datetime
+    try:
+        order_time = datetime.fromisoformat(order_time_str)
+    except (ValueError, TypeError):
+        logger.error(f"Invalid order_placed_time format: {order_time_str}")
+        return state
     
-    timeframe_minutes = state.get("timeframe", 60)  # 默认 1 小时
+    # 计算 K 线收盘时间
+    current_bar = state.get("current_bar")
+    current_bar_close_time_val = current_bar.get("close_time") if current_bar else None
+    
+    if not current_bar_close_time_val:
+        current_bar_close_time = datetime.now(timezone.utc)
+    elif isinstance(current_bar_close_time_val, str):
+        current_bar_close_time = datetime.fromisoformat(current_bar_close_time_val)
+    else:
+        current_bar_close_time = cast(datetime, current_bar_close_time_val)
+    
+    # Ensure both are timezone aware for comparison
+    if current_bar_close_time.tzinfo is None:
+        current_bar_close_time = current_bar_close_time.replace(tzinfo=timezone.utc)
+    if order_time.tzinfo is None:
+        order_time = order_time.replace(tzinfo=timezone.utc)
+
+    timeframe_minutes = int(state.get("timeframe", 60))
     
     # 检查是否已经过了下单所在的 K 线
     time_elapsed = (current_bar_close_time - order_time).total_seconds() / 60
     
     if time_elapsed >= timeframe_minutes:
-        # K 线已经收盘，检查订单是否成交
+        # K 线 Dragon 已收盘，检查订单是否成交
         try:
             client = get_client(state.get("exchange", "bitget"))
-            order_status = client.exchange.fetch_order(order_id, state["symbol"])
+            order_result = client.fetch_order(order_id, symbol)
             
-            if order_status["status"] == "open":
+            if order_result.status == "open":
                 # 订单仍未成交，取消订单
                 logger.warning(
                     f"❌ Setup expired. Order {order_id} not filled after {time_elapsed:.0f} minutes. Canceling..."
                 )
                 
-                client.cancel_order(order_id, state["symbol"])
+                client.cancel_order(order_id, symbol)
                 
                 # Emit cancel event
                 bus.emit_sync("order_monitor_update", {
                     "node": "order_monitor",
                     "status": "CANCELED",
                     "order_id": order_id,
-                    "symbol": state["symbol"],
+                    "symbol": symbol,
                     "reason": "Setup not triggered in time (Brooks principle)"
                 })
                 
@@ -82,14 +103,14 @@ def monitor_pending_order(state: TradingState) -> dict:
                     "cancel_reason": "Setup not triggered in time (Brooks principle)"
                 }
             
-            elif order_status["status"] in ["filled", "closed"]:
+            elif order_result.status in ["filled", "closed"]:
                 # 订单已成交，切换到持仓管理模式
                 logger.info(f"✅ Order {order_id} filled. Switching to position management.")
                 
                 # 获取实际持仓
                 positions = client.get_positions()
                 position = next(
-                    (p for p in positions if p.symbol == state["symbol"]),
+                    (p for p in positions if p.symbol == symbol),
                     None
                 )
                 
@@ -99,7 +120,7 @@ def monitor_pending_order(state: TradingState) -> dict:
                         "node": "order_monitor",
                         "status": "FILLED",
                         "order_id": order_id,
-                        "symbol": state["symbol"],
+                        "symbol": symbol,
                         "fill_price": position.entry_price,
                         "size": position.size,
                         "side": position.side,
@@ -150,27 +171,28 @@ def monitor_pending_order(state: TradingState) -> dict:
     return state
 
 
-def confirm_order_fill(state: TradingState) -> dict:
+def confirm_order_fill(state: TradingState) -> TradingState:
     """
     确认订单成交并更新状态
     
     用于立即确认订单状态（不等待 K 线收盘）
     """
     order_id = state.get("pending_order_id")
-    if not order_id:
+    symbol = state.get("symbol")
+    if not order_id or not symbol:
         return state
     
     try:
         client = get_client(state.get("exchange", "bitget"))
-        order_status = client.exchange.fetch_order(order_id, state["symbol"])
+        order_result = client.fetch_order(order_id, symbol)
         
-        if order_status["status"] in ["filled", "closed"]:
-            logger.info(f"✅ Order {order_id} FILLED at {order_status.get('average', 'N/A')}")
+        if order_result.status in ["filled", "closed"]:
+            logger.info(f"✅ Order {order_id} FILLED")
             
             # 获取真实持仓
             positions = client.get_positions()
             position = next(
-                (p for p in positions if p.symbol == state["symbol"]),
+                (p for p in positions if p.symbol == symbol),
                 None
             )
             
@@ -180,7 +202,7 @@ def confirm_order_fill(state: TradingState) -> dict:
                     "node": "order_monitor",
                     "status": "FILLED",
                     "order_id": order_id,
-                    "symbol": state["symbol"],
+                    "symbol": symbol,
                     "fill_price": position.entry_price,
                     "size": position.size,
                     "side": position.side,
@@ -202,14 +224,14 @@ def confirm_order_fill(state: TradingState) -> dict:
                     "order_placed_time": None
                 }
         
-        elif order_status["status"] == "canceled":
+        elif order_result.status == "canceled":
             logger.warning(f"Order {order_id} was canceled")
             
             bus.emit_sync("order_monitor_update", {
                 "node": "order_monitor",
                 "status": "CANCELED",
                 "order_id": order_id,
-                "symbol": state["symbol"],
+                "symbol": symbol,
                 "reason": "Order canceled externaly"
             })
             

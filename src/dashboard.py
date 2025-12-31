@@ -324,6 +324,39 @@ async def get_history_run_details(run_id: str):
         return {"error": "Run not found", "id": run_id}
     return details
 
+@app.get("/history/orders")
+async def get_history_orders(
+    start_date: str | None = None,
+    end_date: str | None = None,
+    symbol: str | None = None,
+    limit: int = 50,
+    page: int = 1,
+    source: str = 'local'
+):
+    """Fetch historical orders and statistics."""
+    from .database.trading_history import get_order_history
+    
+    start_dt = None
+    end_dt = None
+    
+    try:
+        if start_date:
+            start_dt = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
+        if end_date:
+            end_dt = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
+    except ValueError as e:
+        return {"error": f"Invalid date format: {e}"}
+
+    offset = (page - 1) * limit
+    return get_order_history(
+        start_date=start_dt,
+        end_date=end_dt,
+        symbol=symbol,
+        limit=limit,
+        offset=offset,
+        source=source
+    )
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     client_host = websocket.client.host if websocket.client else "unknown"
