@@ -201,7 +201,7 @@ def main():
         try:
             while True:
                 # === 等待下一个K线收盘 ===
-                if tick_count >= 0:  # 跳过第一次（启动时立即执行）
+                if tick_count > 0:  # 跳过第一次（启动时立即执行）
                     timing_info = candle_timer.wait_until_next_candle()
                     logger.info(
                         f"🕐 Candle close: {timing_info['next_close'].strftime('%H:%M:%S')}, "

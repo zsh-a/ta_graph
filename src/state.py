@@ -74,6 +74,7 @@ class TradingState(TypedDict, total=False):
     last_trade_pnl: float | None
     
     # ========== 元数据 ==========
+    run_id: str | None  # Run ID for data persistence
     messages: list[Any]  # 日志消息
     errors: list[str]  # 错误记录
     warnings: list[str] | None  # 警告信息

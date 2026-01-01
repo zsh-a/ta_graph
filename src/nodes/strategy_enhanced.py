@@ -279,11 +279,37 @@ IMPORTANT: Respect the Brooks analysis. If it says "wait", you should strongly c
             logger.info("Decision is already Hold - skipping filters")
             return {"decisions": [decision_dict]}
         
+        # Prepare market data for quantitative filters
+        import pandas as pd
+        market_data_df = None
+        
+        # Try to extract OHLC data from the first market state or main market_data
+        md_source = market_states[0] if market_states else state.get("market_data", {})
+        
+        if hasattr(md_source, 'ohlcv'):
+            if isinstance(md_source.ohlcv, list):
+                try:
+                    market_data_df = pd.DataFrame(
+                        md_source.ohlcv, 
+                        columns=['timestamp', 'open', 'high', 'low', 'close', 'volume']
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to convert OHLCV to DataFrame properly: {e}")
+        elif isinstance(md_source, dict) and 'ohlcv' in md_source:
+             try:
+                market_data_df = pd.DataFrame(
+                    md_source['ohlcv'], 
+                    columns=['timestamp', 'open', 'high', 'low', 'close', 'volume']
+                )
+             except Exception:
+                pass
+
         # Apply all filters
         trade_filter = get_trade_filter()
         passed, failed_reasons = trade_filter.apply_all_filters(
             decision=decision_dict,
-            brooks_analysis=brooks_analysis
+            brooks_analysis=brooks_analysis,
+            market_data=market_data_df
         )
         
         if not passed:

@@ -249,4 +249,22 @@ def assess_risk(state: AgentState) -> dict[str, Any]:
         "summary": summary
     })
 
+    # Persistence
+    run_id = state.get("run_id")
+    if run_id:
+        from ..database.persistence_manager import get_persistence_manager
+        try:
+            with get_persistence_manager() as pm:
+                for plan in execution_plans:
+                    # In a real system, you might want to link this to a decision
+                    # For now, we record it as part of the run details
+                    pm.record_analysis(
+                        run_id=run_id,
+                        node_name="risk_assessment",
+                        content=plan,
+                        reasoning=plan.get("reason", "Risk assessment approved")
+                    )
+        except Exception as e:
+            logger.warning(f"⚠️  Failed to record risk persistence: {e}")
+
     return {"execution_results": execution_plans}

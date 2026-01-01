@@ -305,7 +305,10 @@ def save_brooks_chart(
 
     annotate_swing_points(main_ax, plot_df, visible_swings)
     
-    # 2. Bar index annotations if requested
+    # 2. Context Overlays (20-bar High/Low) - NEW
+    add_context_overlays(main_ax, plot_df, window=20)
+    
+    # 3. Bar index annotations if requested
     if annotate_bars:
         annotate_bar_indices(main_ax, plot_df, num_bars=20)
     
@@ -314,6 +317,48 @@ def save_brooks_chart(
     plt.close(fig)
     
     return filename
+
+def add_context_overlays(
+    ax: Axes,
+    df: pd.DataFrame,
+    window: int = 20
+):
+    """
+    Add 20-bar high/low context lines to the chart.
+    These are used by Al Brooks to identify trading ranges and breakouts.
+    """
+    if len(df) < window:
+        return
+
+    # Handle both capitalized and lowercase column names
+    h_col = 'High' if 'High' in df.columns else 'high'
+    l_col = 'Low' if 'Low' in df.columns else 'low'
+
+    # Calculate rolling high and low
+    # We use a shift(1) because we want to see the extreme of the PREVIOUS 20 bars relative to the current bar
+    rolling_high = df[h_col].rolling(window=window).max()
+    rolling_low = df[l_col].rolling(window=window).min()
+
+    # Get the last values (the context for the current signal bar)
+    last_high = rolling_high.iloc[-1]
+    last_low = rolling_low.iloc[-1]
+
+    # Draw horizontal lines for the current context
+    ax.axhline(y=last_high, color='blue', linestyle='--', linewidth=0.8, alpha=0.4, zorder=1)
+    ax.axhline(y=last_low, color='blue', linestyle='--', linewidth=0.8, alpha=0.4, zorder=1)
+
+    # Add labels on the right edge
+    xlim = ax.get_xlim()
+    ax.text(
+        xlim[1], last_high, f" {window}H",
+        fontsize=8, color='blue', alpha=0.6,
+        va='center', ha='left', weight='bold'
+    )
+    ax.text(
+        xlim[1], last_low, f" {window}L",
+        fontsize=8, color='blue', alpha=0.6,
+        va='center', ha='left', weight='bold'
+    )
 
 def add_pattern_annotations(
     ax: Axes,

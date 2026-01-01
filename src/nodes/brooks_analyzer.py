@@ -48,6 +48,14 @@ class BrooksPattern(BaseModel):
     bars_involved: list[int] = Field(description="Bar indices involved in pattern")
     description: str
 
+class RiskAssessment(BaseModel):
+    """Proposed trade risk parameters"""
+    stop_loss_price: float
+    take_profit_price: float
+    reward_to_risk_ratio: float = Field(description="Target Reward / Risk. Should be >= 2.0 ideally.")
+    stop_loss_type: Literal["swing_low", "swing_high", "bar_extreme", "measured_move"]
+    leverage_suggestion: int = Field(ge=1, le=20, default=5)
+
 class BrooksAnalysis(BaseModel):
     """Complete Al Brooks price action analysis"""
     # Market State
@@ -76,17 +84,13 @@ class BrooksAnalysis(BaseModel):
     recommended_action: Literal["buy_setup", "sell_setup", "wait"]
     wait_reason: str | None = None
     setup_quality: int = Field(ge=0, le=10, description="Overall setup quality 0-10")
+    risk_assessment: RiskAssessment | None = Field(description="Required if action is NOT wait")
 
 # ==================== Prompts ====================
 
 def get_brooks_analysis_prompt(bar_data_table: str, include_htf: bool = False, htf_summary: str = "") -> str:
     """
-    Generate prompt for Brooks analysis using VL model.
-    
-    Args:
-        bar_data_table: Formatted text table of recent bars
-        include_htf: Whether HTF context is available
-        htf_summary: Summary of higher timeframe analysis
+    Generate prompt for Brooks analysis using VL model with strict CoT enforcement.
     """
     
     htf_section = ""
@@ -94,85 +98,58 @@ def get_brooks_analysis_prompt(bar_data_table: str, include_htf: bool = False, h
         htf_section = f"""
 ## Higher Timeframe Context
 {htf_summary}
-
-RULE: If HTF is in a strong trend, ONLY trade pullbacks on the primary timeframe.
-If HTF is in a trading range, expect choppy price action on the primary timeframe.
+RULE: If HTF is in a strong trend, bias trades in that direction. If HTF is ranging, expect chop.
 """
     
-    return f"""You are Al Brooks analyzing this price action chart.
+    return f"""You are Al Brooks, the legendary price action trader. You see every tick, every wick, and every trap.
 
-METHODOLOGY:
-1. **Always In Direction**: Determine if the market is "Always In Long", "Always In Short", or "Neutral"
-   - Always In Long: Price making higher highs and higher lows, above EMA20
-   - Always In Short: Price making lower highs and lower lows, below EMA20
-   - Neutral: Sideways, overlapping bars, many dojis
+## OBJECTIVE
+Analyze the provided chart images (Context + Focus) and determine the strict "Market Cycle". Then, if and ONLY if a high-quality setup exists, provide a trade recommendation with precise risk parameters.
 
-2. **Market Cycle**: Classify the current market state
-   - Strong Bull/Bear Trend: 5+ consecutive trend bars, strong momentum
-   - Weak Bull/Bear Trend: Some trend bars but also dojis, pullbacks
-   - Trading Range: Oscillating between support/resistance, horizontal
-   - Breakout Mode: Breaking out of a range or trend line
-   - Climax: Extreme buying/selling, likely reversal coming
+## THOUGHT PROCESS (Chain of Thought)
+You MUST think in this exact order:
 
-3. **Signal Bar** (Bar -1, the last COMPLETED bar):
-   - Quality Score: 
-     * 9-10: Perfect trend bar (tiny tails, large body, closes near extreme)
-     * 6-8: Good trend bar (small tails, decent body)
-     * 3-5: Weak signal bar (large tails, small body)
-     * 0-2: Terrible (large doji, confusion)
-   - Body Size: What % is body vs total range?
-   - Tails: Are tails small (good) or large (bad)?
-   - Follow-through: Does it continue the previous bar's direction?
+1. **PHASE 1: Market Cycle Diagnosis** (The "Context")
+   - Is the market in a **Breakout** (Strong Trend)? -> *Action: Go with it.*
+   - Is the market in a **Channel** (Weak Trend)? -> *Action: Trade pullbacks.*
+   - Is the market in a **Trading Range**? -> *Action: Buy Low / Sell High. Fade breakouts.*
+   - Is the market in **Barb Wire** (Tight Trading Range)? -> *Action: DO NOT TRADE. SIT ON HANDS.*
+   - **Check for "Barb Wire"**: Look at the last 5-10 bars. Are they overlapping? Are there many dojis? If yes, declare "Barb Wire" and set Action = Wait.
 
-4. **Pattern Detection**:
-   - **Wedge** (3 pushes): Three attempts to push higher/lower with divergence
-   - **High 2 / Low 2**: Pullback setup (failed second attempt to make new high/low)
-   - **MTR** (Major Trend Reversal): Strong reversal after extended trend
-   - **Failed Breakout**: Price breaks level but immediately reverses
-   - **TTR** (Tight Trading Range): Small overlapping bars, "doji forest"
+2. **PHASE 2: Signal Bar Evaluation** (The "Trigger")
+   - Look at Bar -1 (the last completed bar).
+   - Is it a strong Trend Bar? (Big body, small tails).
+   - Is it a Reversal Bar? (Hammer/Shooting Star at a swing point).
+   - **Trading Range Rule**: If in a Trading Range, Signal Bar MUST be perfect (9/10 quality) to enter. If mediocre, WAIT.
 
-5. **Buying vs Selling Pressure** (0-10 each):
-   - Look at: Close positions relative to range, tail sizes, bar overlaps
-   - 8-10: Dominant pressure, 4-6: Balanced, 0-3: Weak pressure
+3. **PHASE 3: Risk Assessment** (The "Math")
+   - If you recommend a trade, where is the invalidation point (Stop Loss)?
+   - Where is the target (Measured Move)?
+   - Is Reward/Risk > 2.0? If not, is the probability high enough (60%+) to justify 1:1?
 
-## Visual Markers:
-- **Bars**: Green = Bullish; Red = Bearish.
-- **Lines**: Blue = 20-period EMA.
-- **Zonal Shading**: Background alternates between light gray and white every 10 bars (e.g., "ZONE A", "ZONE B"). Use these to avoid "visual squeeze" and precisely group bars.
-- **Vertical Lines**: Very faint dotted gray lines for EVERY bar. Use these for pixel-perfect alignment.
-- **Signal Bar**: Highlighted with a yellow background area labeled "-1" at the bottom.
-- **Swing Points (Sx)**: Significant turning points labeled **S1, S2, S3...** in dark boxes.
-    - **Use these for Measured Moves!** E.g., "Leg 1 is S1-S2, projected from S3".
-- **Indices**: Numbers at the bottom (-20, -19... 0). 
-    - **Rotated**: Numbers are rotated 90 degrees to prevent overlap.
-    - **Z-Pattern**: Numbers alternate height (high/low) to stay clear.
+## PATTERN REFERENCE
+- **Wedge**: 3 pushes + divergence. Strong reversal signal.
+- **MTR (Major Trend Reversal)**: Trend break + test of extreme + lower high/higher low.
+- **H1/H2 (L1/L2)**: Pullbacks in a trend. In a Bull trend, look to buy H1 or H2.
+- **Barb Wire**: 3+ consecutive overlapping bars with dojis. **DEATH ZONE - DO NOT TRADE.**
 
-## Bar Data (Primary Timeframe)
+## VISUAL INPUTS
+- **Context Chart**: 120 bars. Use for Trend Lines, Support/Resistance, and Broad Cycle.
+- **Focus Chart**: Last 30 bars. Use for Signal Bar details.
+- **Markers**:
+    - "S1, S2, S3": Swing Points. Use for stop placement (e.g., "Stop below S2").
+    - "-1": The Signal Bar.
+
+## Bar Data (Text)
 {bar_data_table}
 
-- **Idx**: Bar index matching the bottom of the chart.
-- **Type**: Trend bar (large body) or Doji (small body/confusion).
-- **Body%**: Body size as percentage of total range.
-- **EMA Dist**: Distance to EMA20.
-- **H/L Count**: Brooks leg counting (H1/H2, L1/L2 logic).
-- **Swing**: Displays S1, S2... if this bar is a detected swing point.
+## OUTPUT REQUIREMENTS
+Return valid JSON matching the schema.
 
-## Visual Analysis Instructions
-- **Context vs Detail**: You are provided with both a "Context Chart" (broad view) and a "Focus Chart" (zoomed view of the last 30 bars).
-- **Spatial Focus**: Pay strict attention to the **far right edge**.
-- Bar 0 = current incomplete bar (ignore for decisions)
-- Bar -1 = signal bar (most important for entry decisions)
-- Use the **Focus Chart** for precise candle-counting and body-sizing.
-- Use the **Context Chart** to identify major support/resistance, trend lines, and **Swing Points (Sx)** across the whole range.
-- **Measured Moves**: If you see a clear Spike (Leg 1), identify its start and end points using **Sx** labels (e.g., S1 to S2). Then project that height from a pullback point (e.g., S3) to find the Target.
-
-## Output Requirements
-Return ONLY valid JSON matching the BrooksAnalysis schema.
-
-CRITICAL:
-- If market is in TTR (Tight Trading Range) AND signal bar quality < 7, set recommended_action = "wait"
-- If in strong trend but no pullback setup, set recommended_action = "wait"  
-- Do NOT force a trade. "Wait" is often the professional choice.
+### CRITICAL RULES
+1. **Trading Range Logic**: If Market Cycle = "Trading Range", you are FORBIDDEN to Buy in the upper third or Sell in the lower third.
+2. **Barb Wire Block**: If >= 3 of the last 5 bars overlap heavily -> Action = "wait", Reason = "Barb Wire - market is chopping".
+3. **Trend Logic**: In a Strong Bull Trend, ignore weak sell signals (Counter-Trend). In a Strong Bear Trend, ignore weak buy signals.
 """
 
 def create_brooks_messages(
@@ -342,6 +319,7 @@ def brooks_fallback(state: AgentState) -> dict:
             "ema20_relationship": "at",
             "recommended_action": "wait",
             "wait_reason": "Brooks analysis exceeded timeout - recommending HOLD for safety",
+            "risk_assessment": None,
             "_validation": {"valid": False, "errors": ["Timeout"], "warnings": ["Analysis did not complete"]}
         },
         "validation_result": {"valid": False, "errors": ["Timeout"], "warnings": []}
