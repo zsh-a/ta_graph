@@ -304,11 +304,18 @@ class PersistenceManager:
         """Store a dashboard event for log persistence."""
         from .models import DashboardEvent
         
+        # Extract run_id from event data if present
+        data = event.get('data', {})
+        run_id = None
+        if isinstance(data, dict):
+            run_id = data.get('run_id')
+        
         db_event = DashboardEvent(
+            run_id=run_id,
             type=event.get('type'),
-            node=event.get('data', {}).get('node') if isinstance(event.get('data'), dict) else None,
+            node=data.get('node') if isinstance(data, dict) else None,
             message=event.get('message'),
-            data=event.get('data'),
+            data=data,
             timestamp=datetime.fromisoformat(event['timestamp']) if 'timestamp' in event and isinstance(event['timestamp'], str) else datetime.now(timezone.utc)
         )
         self._db.add(db_event)
@@ -336,7 +343,8 @@ class PersistenceManager:
             'type': e.type,
             'timestamp': to_iso(e.timestamp),
             'data': e.data if e.data else {},
-            'message': e.message
+            'message': e.message,
+            'run_id': e.run_id  # Include run_id for workflow tracking
         } for e in reversed(events)]  # Reverse to get chronological order
         
         return result
@@ -374,6 +382,8 @@ class PersistenceManager:
 
     def get_run_details(self, run_id: str) -> dict:
         """Fetch all related data for a single workflow run."""
+        from .models import DashboardEvent
+        
         run = self._db.query(WorkflowRun).filter(WorkflowRun.id == run_id).first()
         if not run:
             return {}
@@ -388,6 +398,9 @@ class PersistenceManager:
         analyses = self._db.query(AIAnalysis).filter(AIAnalysis.runId == run_id).all()
         decisions = self._db.query(TradingDecision).filter(TradingDecision.runId == run_id).all()
         executions = self._db.query(ExecutionRecord).filter(ExecutionRecord.runId == run_id).all()
+        
+        # Fetch dashboard events for this run
+        dashboard_events = self._db.query(DashboardEvent).filter(DashboardEvent.run_id == run_id).order_by(DashboardEvent.timestamp).all()
         
         return {
             "id": run.id,
@@ -436,6 +449,15 @@ class PersistenceManager:
                     "error": exc.error,
                     "timestamp": to_iso(exc.createdAt)
                 } for exc in executions
+            ],
+            "events": [
+                {
+                    "type": ev.type,
+                    "node": ev.node,
+                    "message": ev.message,
+                    "data": ev.data,
+                    "timestamp": to_iso(ev.timestamp)
+                } for ev in dashboard_events
             ]
         }
 

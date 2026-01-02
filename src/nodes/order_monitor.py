@@ -69,10 +69,23 @@ def monitor_pending_order(state: TradingState) -> TradingState:
 
     timeframe_minutes = int(state.get("timeframe", 60))
     
-    # 检查是否已经过了下单所在的 K 线
-    time_elapsed = (current_bar_close_time - order_time).total_seconds() / 60
+    # Get expiration_bars from execution metadata (default: 1 = expire at end of setup bar)
+    execution_metadata = state.get("execution_metadata", {}) or {}
+    expiration_bars = int(execution_metadata.get("expiration_bars", 1))
     
-    if time_elapsed >= timeframe_minutes:
+    # Also check trading_plan if available
+    trading_plan = state.get("trading_plan")
+    if trading_plan and hasattr(trading_plan, 'entry'):
+        expiration_bars = getattr(trading_plan.entry, 'expiration_bars', expiration_bars)
+    elif isinstance(trading_plan, dict) and 'entry' in trading_plan:
+        entry = trading_plan.get('entry', {}) or {}
+        expiration_bars = entry.get('expiration_bars', expiration_bars)
+    
+    # 检查是否已经过了下单所在的 K 线 (considering expiration_bars)
+    time_elapsed = (current_bar_close_time - order_time).total_seconds() / 60
+    expiration_minutes = timeframe_minutes * expiration_bars
+    
+    if time_elapsed >= expiration_minutes:
         # K 线 Dragon 已收盘，检查订单是否成交
         try:
             client = get_client(state.get("exchange", "bitget"))

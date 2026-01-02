@@ -1,7 +1,7 @@
 import asyncio
 from typing import Any, Callable, Awaitable
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 
 class EventBus:
     """
@@ -30,7 +30,7 @@ class EventBus:
         event = {
             "type": event_type,
             "data": data,
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat()
         }
         await self.queue.put(event)
 
@@ -40,7 +40,7 @@ class EventBus:
             event = {
                 "type": event_type,
                 "data": data,
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now(timezone.utc).isoformat()
             }
             def _put():
                 # 注意：这里我们是在 loop 线程中执行的

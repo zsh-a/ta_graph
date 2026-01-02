@@ -46,6 +46,19 @@ class TradingState(TypedDict, total=False):
     execution_results: list[dict[str, Any]]
     execution_metadata: dict[str, Any]
     
+    # ========== Tiered Analysis (L0/L1/L2) ==========
+    brooks_notation: str | None  # L0: Encoded bar patterns in Brooks notation
+    market_context: dict[str, Any] | None  # L0: ATR, range, volatility context
+    is_dead_market: bool  # L0: Dead market gate flag
+    l1_response: dict[str, Any] | None  # L1: Text model screening response
+    l1_setup_detected: bool  # L1: Whether a setup was detected
+    l1_setup_type: str | None  # L1: Type of setup (H1_buy, L1_sell, etc.)
+    l1_market_state: dict[str, Any] | None  # L1: Updated market state
+    l1_reasoning: str | None  # L1: Reasoning for the decision
+    l1_confidence: str | None  # L1: Confidence level
+    trading_plan: Any | None  # L2: Structured TradingPlan from vision model
+    second_entry_state: dict[str, Any] | None  # Second entry state machine
+    
     # Flow control
     pending_order_id: str | None
     order_placed_time: str | None

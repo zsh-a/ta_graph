@@ -337,12 +337,17 @@ class DashboardEvent(Base):
     __tablename__ = "dashboard_events"
     
     id = Column(String, primary_key=True, default=lambda: str(uuid4()))
+    run_id = Column(String, ForeignKey("WorkflowRun.id", ondelete="SET NULL"), nullable=True, index=True)
     type = Column(String, nullable=False, index=True)  # e.g., 'node_start', 'analysis_complete', etc.
     node = Column(String, nullable=True, index=True)  # Which node emitted this event
     message = Column(String, nullable=True)  # Human-readable message
     data = Column(JSON, nullable=True)  # Event payload
     timestamp = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc), index=True)
     
+    # Relationship to WorkflowRun
+    run = relationship("WorkflowRun", backref="events")
+    
     __table_args__ = (
         Index('idx_dashboard_event_timestamp_type', 'timestamp', 'type'),
+        Index('idx_dashboard_event_run_id', 'run_id'),
     )

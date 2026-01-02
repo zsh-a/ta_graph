@@ -304,6 +304,43 @@ export const useStore = create<DashboardState>((set, get) => ({
                     data
                 });
                 break;
+
+            case 'l0_gate':
+                eventLogs.push({
+                    id: Math.random().toString(36).substr(2, 9),
+                    type: data.is_dead_market ? 'warning' : 'info',
+                    node: data.node || 'l0_gate',
+                    message: data.is_dead_market
+                        ? '🐟 Dead market detected - skipping AI analysis'
+                        : '✅ L0 Gate passed - continuing to analysis',
+                    timestamp,
+                    data
+                });
+                break;
+
+            case 'l0_preprocessing_complete':
+                eventLogs.push({
+                    id: Math.random().toString(36).substr(2, 9),
+                    type: data.is_dead_market ? 'warning' : 'success',
+                    node: data.node || 'market_data',
+                    message: data.is_dead_market
+                        ? `📊 L0 Preprocessing: Dead market (ATR ${data.atr_pct?.toFixed(2)}%)`
+                        : `📊 L0 Preprocessing complete (ATR ${data.atr_pct?.toFixed(2)}%)`,
+                    timestamp,
+                    data
+                });
+                break;
+
+            case 'node_complete':
+                eventLogs.push({
+                    id: Math.random().toString(36).substr(2, 9),
+                    type: 'success',
+                    node: data.node,
+                    message: data.message || `✓ ${data.node} completed`,
+                    timestamp,
+                    data
+                });
+                break;
         }
 
         // Handle logs accumulation/merge

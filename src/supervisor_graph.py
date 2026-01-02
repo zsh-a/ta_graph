@@ -24,6 +24,7 @@ from src.position_management_workflow import get_position_management_subgraph
 from src.safety import ConvictionTracker, get_equity_protector
 from src.state import TradingState
 from src.graph import get_analysis_subgraph
+from src.utils.event_emitter import emit_node_event
 
 logger = get_logger(__name__)
 
@@ -32,6 +33,7 @@ logger = get_logger(__name__)
 def init_node(state: TradingState) -> TradingState:
     """Initialize the trading system state"""
     logger.info("🎬 Initializing trading system...")
+    emit_node_event("node_start", "init", message="Initializing trading system")
     
     # Sync with account manager to get latest state
     am = get_account_manager()
@@ -97,6 +99,10 @@ def init_node(state: TradingState) -> TradingState:
     logger.info(
         f"✓ Initialization complete (Balance: ${account_info.total_balance:.2f}, Position: {'Yes' if current_position else 'No'})"
     )
+    emit_node_event("node_complete", "init", {
+        "balance": account_info.total_balance,
+        "has_position": current_position is not None
+    })
     return cast(TradingState, cast(object, updates))
 
 
@@ -110,6 +116,7 @@ def risk_guard_node(state: TradingState) -> TradingState:
     3. 连败保护
     """
     logger.debug("🛡️  Risk guard checking...")
+    emit_node_event("node_start", "risk_guard", message="Checking risk limits")
 
     protector = get_equity_protector()
 
@@ -130,6 +137,7 @@ def risk_guard_node(state: TradingState) -> TradingState:
 
     # 通过风控
     logger.debug("✓ Risk guard passed")
+    emit_node_event("node_complete", "risk_guard", {"passed": True})
     return cast(TradingState, cast(Any, {
         "is_trading_enabled": True,
         "loop_count": state.get("loop_count", 0) + 1,
@@ -145,6 +153,7 @@ def pre_scanner_node(state: TradingState) -> TradingState:
     这里负责设置subgraph需要但parent中格式不同的字段
     """
     logger.info("🔍 HUNTING MODE: Scanning market...")
+    emit_node_event("node_start", "pre_scanner", message="Scanning market for opportunities")
 
     # 准备 subgraph 需要的字段格式
     updates: dict = {

@@ -232,6 +232,10 @@ def main():
                             )
                             run_id = run.id
                             logger.info(f"💾 Created Persistence Run: {run_id}")
+                            
+                            # Set run_id for event emitter so all node events include it
+                            from src.utils.event_emitter import set_current_run_id
+                            set_current_run_id(run_id)
                     except Exception as e:
                         logger.warning(f"⚠️  Failed to create persistence run: {e}")
 

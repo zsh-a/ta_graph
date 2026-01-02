@@ -13,12 +13,14 @@ from ..state import AgentState
 from ..logger import get_logger
 from ..database import get_session, ModelType, OperationType, SymbolType
 from ..database.trading_history import create_trading_record
+from ..models.market_state import TradingPlan
 
 from ..trading.exchange_client import get_client, ExchangeClient
 from ..utils.event_bus import get_event_bus
 
 logger = get_logger(__name__)
 bus = get_event_bus()
+
 
 
 class TradeResult:
@@ -41,6 +43,40 @@ class TradeResult:
         self.executed_amount = executed_amount
         self.status = status
         self.error = error
+
+
+def convert_trading_plan_to_execution_format(
+    trading_plan: TradingPlan,
+    symbol: str,
+    amount: float,
+    leverage: int = 20
+) -> dict:
+    """
+    Convert structured TradingPlan to legacy execution_plan dict format.
+    
+    This bridge function allows the new TradingPlan protocol to work with
+    the existing execution logic while maintaining backward compatibility.
+    """
+    params = trading_plan.to_execution_params()
+    
+    return {
+        "status": "APPROVED",
+        "trading_symbol": symbol,
+        "symbol": symbol.split('/')[0] if '/' in symbol else symbol,
+        "side": params["side"].upper(),
+        "operation": "Buy" if params["side"] == "buy" else "Sell",
+        "amount": amount,
+        "entry_price": params["entry_price"],
+        "stop_loss": params["stop_loss"],
+        "take_profit": params["take_profit"],
+        "leverage": leverage,
+        "order_type": params["order_type"],
+        "expiration_bars": params.get("expiration_bars", 2),
+        "source": "TradingPlan",
+        "plan_status": trading_plan.status,
+        "management_logic": trading_plan.management_strategy.logic if trading_plan.management_strategy else None,
+        "trail_stop_mode": trading_plan.management_strategy.trail_stop_mode if trading_plan.management_strategy else None,
+    }
 
 
 def execute_buy_order(
@@ -191,6 +227,32 @@ def execute_trade(state: AgentState) -> dict:
     execution_plans = state.get("execution_results") or []
     decisions = state.get("decisions") or []
     warnings_list = list(state.get("warnings") or [])  # Get existing warnings or empty list
+    
+    # Priority: Check for structured TradingPlan from L2 analyzer
+    trading_plan = state.get("trading_plan")
+    if trading_plan is not None:
+        logger.info("📋 Found structured TradingPlan - using as primary execution source")
+        # Get symbol and amount from market_data or state
+        market_data = state.get("market_data")
+        symbol = "BTC/USDT"  # Default
+        if isinstance(market_data, dict):
+            symbol = market_data.get("trading_symbol", "BTC/USDT")
+        elif isinstance(market_data, list) and market_data:
+            symbol = market_data[0].get("trading_symbol", "BTC/USDT")
+        
+        # Get amount from risk assessment or default
+        amount = 0.01  # Default position size
+        if execution_plans and isinstance(execution_plans, list) and execution_plans:
+            amount = execution_plans[0].get("amount", 0.01)
+        
+        # Convert TradingPlan to execution format
+        converted_plan = convert_trading_plan_to_execution_format(
+            trading_plan=trading_plan,
+            symbol=symbol,
+            amount=amount
+        )
+        execution_plans = [converted_plan]
+        logger.info(f"✓ Converted TradingPlan to execution format: {converted_plan.get('side')} {symbol}")
     
     # Track execution metadata
     execution_metadata = {

@@ -5,10 +5,11 @@ import datetime
 from typing import List
 from langfuse import observe
 from ..state import AgentState
-from ..utils.event_bus import get_event_bus
+from ..utils.event_emitter import emit_node_event
 from ..logger import get_logger
 from ..utils.timeframe_config import get_data_limit
 from ..utils.brooks_chart import save_brooks_chart, get_swing_points  # Use Brooks chart renderer
+from ..utils.l0_preprocessor import L0Preprocessor, encode_bars_to_text, is_dead_market
 
 logger = get_logger(__name__)
 
@@ -118,8 +119,7 @@ def fetch_market_data(state: AgentState) -> dict:
     Populates 'market_states' list for the strategy node.
     """
     logger.info("Fetching market data...")
-    bus = get_event_bus()
-    bus.emit_sync("node_start", {"node": "market_data"})
+    emit_node_event("node_start", "market_data", message="Fetching market data")
     symbol = state.get("symbol", "BTC/USDT")
     interval = state.get("primary_timeframe", "15m")
     
@@ -231,7 +231,7 @@ def fetch_market_data(state: AgentState) -> dict:
     
     volume_24h = sum([float(bar[5]) for bar in ohlcv[-24:]]) if len(ohlcv) >= 24 else 0.0
     
-    bus.emit_sync("market_update", {
+    emit_node_event("market_update", "market_data", {
         "symbol": symbol,
         "price": float(current_price),
         "time": int(pd.Timestamp(df.index[-1]).timestamp()),
@@ -239,8 +239,7 @@ def fetch_market_data(state: AgentState) -> dict:
     })
     
     # NEW: Emit detailed market data complete event for frontend display
-    bus.emit_sync("market_data_complete", {
-        "node": "market_data",
+    emit_node_event("market_data_complete", "market_data", {
         "symbol": symbol,
         "timeframe": timeframe,
         "bars": len(ohlcv),
@@ -268,6 +267,34 @@ def fetch_market_data(state: AgentState) -> dict:
         except Exception as e:
             logger.warning(f"⚠️  Failed to record market observation: {e}")
 
+    # ========== L0 Preprocessing ==========
+    # Apply pure Python preprocessing for tiered funnel architecture
+    try:
+        # Check for dead market (low volatility) - requires list of bar dicts
+        dead_market = is_dead_market(bars)
+        
+        # Generate Brooks notation for L1 text model
+        ema_list = df['ema20'].tolist() if 'ema20' in df.columns else None
+        brooks_notation = encode_bars_to_text(bars[-10:], ema_values=ema_list[-10:] if ema_list else None)
+        
+        # Get L0 preprocessor for detailed market context
+        preprocessor = L0Preprocessor()
+        market_ctx = preprocessor.get_market_context(bars)
+        
+        logger.info(f"📊 L0: Dead market={dead_market}, notation length={len(brooks_notation)}")
+        
+        # Emit L0 gate event with run_id
+        emit_node_event("l0_preprocessing_complete", "market_data", {
+            "is_dead_market": dead_market,
+            "atr_pct": market_ctx.atr_pct if market_ctx else None,
+            "next_step": "END" if dead_market else "l1_screener"
+        })
+    except Exception as e:
+        logger.warning(f"⚠️  L0 preprocessing failed: {e}")
+        dead_market = False
+        brooks_notation = ""
+        market_ctx = None
+
     return {
         "market_data": market_data_dict,
         "market_states": [market_data_dict],  # List format for consistency
@@ -275,5 +302,10 @@ def fetch_market_data(state: AgentState) -> dict:
         "current_bar": bars[-1] if bars else None,
         "current_price": float(current_price),
         "chart_image_path": chart_path,
-        "focus_chart_image_path": focus_chart_path
+        "focus_chart_image_path": focus_chart_path,
+        # L0 Preprocessing outputs for tiered architecture
+        "is_dead_market": dead_market,
+        "brooks_notation": brooks_notation,
+        "market_context": market_ctx.to_dict() if market_ctx else None
     }
+

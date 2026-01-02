@@ -192,3 +192,52 @@ def get_llm(provider: Optional[ModelProvider] = None) -> ChatOpenAI:
         return manager.get_llm(temp_config)
     
     return manager.get_llm()
+
+
+# ==================== L1/L2 Tiered Model Functions ====================
+
+def get_l1_model() -> ChatOpenAI:
+    """
+    获取 L1 低成本文本模型
+    
+    用于初步筛选和状态更新，成本低，速度快。
+    默认使用 qwen-turbo (ModelScope API)
+    
+    环境变量:
+        L1_MODEL_NAME: 模型名称，默认 "Qwen/Qwen3-235B-A22B-Instruct-2507"
+    """
+    model_name = os.getenv("L1_MODEL_NAME", "Qwen/Qwen3-235B-A22B-Instruct-2507")
+    
+    config = ModelConfig(
+        provider="modelscope",
+        model_name=model_name,
+        base_url=os.getenv("MODELSCOPE_API_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+        api_key=os.getenv("MODELSCOPE_API_KEY"),
+        temperature=0.1,
+        timeout=60  # L1 应该响应更快
+    )
+    return get_model_manager().get_llm(config)
+
+
+def get_l2_model() -> ChatOpenAI:
+    """
+    获取 L2 高成本视觉模型
+    
+    用于最终确认和复杂形态识别，成本高，能力强。
+    默认使用 qwen-vl-max (ModelScope API)
+    
+    环境变量:
+        L2_MODEL_NAME: 模型名称，默认 "Qwen/Qwen3-VL-30B-A3B-Thinking"
+    """
+    model_name = os.getenv("L2_MODEL_NAME", "Qwen/Qwen3-VL-30B-A3B-Thinking")
+    
+    config = ModelConfig(
+        provider="modelscope",
+        model_name=model_name,
+        base_url=os.getenv("MODELSCOPE_API_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+        api_key=os.getenv("MODELSCOPE_API_KEY"),
+        temperature=0.1,
+        timeout=120
+    )
+    return get_model_manager().get_llm(config)
+

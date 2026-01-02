@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useStore } from '../store';
-import { History, Calendar, ChevronRight, Activity, Brain, Shield, Zap, Info, ArrowUpRight, ArrowDownRight } from 'lucide-react';
+import { History, Calendar, ChevronRight, Activity, Brain, Shield, Zap, ArrowUpRight, ArrowDownRight } from 'lucide-react';
+import { TimelineRenderer } from '../components/EventCards';
 
 export const HistoryView: React.FC = () => {
     const { historyRuns, currentRunDetails, historyLoading, fetchHistoryRuns, fetchRunDetails } = useStore();
@@ -293,7 +294,7 @@ const WorkflowHistory = ({
                 </div>
             </div>
 
-            {/* Details Side - Kept as is, just wrapped */}
+            {/* Details Side */}
             {selectedRunId && (
                 <div className="flex-1 flex flex-col gap-4 overflow-hidden animate-in slide-in-from-right-4">
                     {!currentRunDetails || historyLoading ? (
@@ -362,152 +363,20 @@ const WorkflowHistory = ({
                                     <button className="text-sm font-bold text-primary border-b-2 border-primary pb-1">Detailed Timeline</button>
                                 </div>
                                 <div className="flex-1 overflow-y-auto p-6 custom-scrollbar space-y-4">
-                                    {(() => {
-                                        // Unify all events into a single timeline sorted by timestamp
-                                        const timelineEvents = [
+                                    <TimelineRenderer
+                                        events={[
                                             ...(currentRunDetails.observations || []).map((o: any) => ({ ...o, type: 'observation' })),
                                             ...(currentRunDetails.analyses || []).map((a: any) => ({ ...a, type: 'analysis' })),
                                             ...(currentRunDetails.decisions || []).map((d: any) => ({ ...d, type: 'decision' })),
                                             ...(currentRunDetails.executions || []).map((e: any) => ({ ...e, type: 'execution' })),
-                                        ].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-
-                                        if (timelineEvents.length === 0) {
-                                            return (
-                                                <div className="h-full flex flex-col items-center justify-center text-muted-foreground py-12">
-                                                    <Info size={32} className="mb-2 opacity-20" />
-                                                    <p>No detailed events recorded for this run.</p>
-                                                </div>
-                                            );
-                                        }
-
-                                        return timelineEvents.map((event: any, idx: number) => {
-                                            if (event.type === 'observation') {
-                                                return (
-                                                    <div key={`obs-${idx}`} className="relative pl-8 border-l-2 border-primary/20 pb-4 last:pb-0 group">
-                                                        <div className="absolute -left-[9px] top-0 p-1 bg-background border-2 border-primary rounded-full transition-transform group-hover:scale-110">
-                                                            <Activity size={12} className="text-primary" />
-                                                        </div>
-                                                        <div className="mb-2 flex items-center gap-3">
-                                                            <h4 className="font-bold text-xs uppercase tracking-wider text-primary">Market Observation</h4>
-                                                            <span className="text-[10px] text-muted-foreground">{formatDate(event.timestamp)}</span>
-                                                        </div>
-                                                        <div className="p-4 bg-muted/20 hover:bg-muted/30 transition-colors rounded-xl border border-border/50 text-sm">
-                                                            <div className="flex gap-8">
-                                                                <div>
-                                                                    <span className="text-[10px] uppercase text-muted-foreground block font-bold mb-1">Price</span>
-                                                                    <span className="font-mono font-bold text-lg">${event.price.toFixed(2)}</span>
-                                                                </div>
-                                                                {event.indicators && (
-                                                                    <div>
-                                                                        <span className="text-[10px] uppercase text-muted-foreground block font-bold mb-1">Indicators</span>
-                                                                        <div className="flex gap-4">
-                                                                            {event.indicators.rsi && (
-                                                                                <div className="flex flex-col">
-                                                                                    <span className="text-[9px] text-muted-foreground">RSI</span>
-                                                                                    <span className="font-mono font-bold text-accent">{event.indicators.rsi.toFixed(1)}</span>
-                                                                                </div>
-                                                                            )}
-                                                                            {event.indicators.ema20 && (
-                                                                                <div className="flex flex-col">
-                                                                                    <span className="text-[9px] text-muted-foreground">EMA20</span>
-                                                                                    <span className="font-mono font-bold text-primary">${event.indicators.ema20.toFixed(2)}</span>
-                                                                                </div>
-                                                                            )}
-                                                                        </div>
-                                                                    </div>
-                                                                )}
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                );
-                                            }
-
-                                            if (event.type === 'analysis') {
-                                                return (
-                                                    <div key={`ana-${idx}`} className="relative pl-8 border-l-2 border-accent/20 pb-4 last:pb-0 group">
-                                                        <div className="absolute -left-[9px] top-0 p-1 bg-background border-2 border-accent rounded-full transition-transform group-hover:scale-110">
-                                                            <Brain size={12} className="text-accent" />
-                                                        </div>
-                                                        <div className="mb-2 flex items-center gap-3">
-                                                            <h4 className="font-bold text-xs uppercase tracking-wider text-accent">{event.node_name.replace('_', ' ')}</h4>
-                                                            <span className="text-[10px] text-muted-foreground">{formatDate(event.timestamp)}</span>
-                                                        </div>
-                                                        <div className="p-4 bg-muted/20 hover:bg-muted/30 transition-colors rounded-xl border border-border/50 text-sm">
-                                                            <p className="text-muted-foreground mb-3 leading-relaxed">{event.reasoning}</p>
-                                                            {event.content && event.content.recommended_action && (
-                                                                <div className="flex items-center gap-2 p-2 bg-background/50 rounded-lg border border-border/30 inline-flex">
-                                                                    <Info size={14} className="text-primary" />
-                                                                    <span className="font-bold uppercase text-[10px]">Recommendation: {event.content.recommended_action}</span>
-                                                                </div>
-                                                            )}
-                                                        </div>
-                                                    </div>
-                                                );
-                                            }
-
-                                            if (event.type === 'decision') {
-                                                return (
-                                                    <div key={`dec-${idx}`} className="relative pl-8 border-l-2 border-primary/20 pb-4 last:pb-0 group">
-                                                        <div className="absolute -left-[9px] top-0 p-1 bg-background border-2 border-primary rounded-full transition-transform group-hover:scale-110">
-                                                            <Shield size={12} className="text-primary" />
-                                                        </div>
-                                                        <div className="mb-2 flex items-center gap-3">
-                                                            <h4 className="font-bold text-xs uppercase tracking-wider text-primary">Strategy Proposal</h4>
-                                                            <span className="text-[10px] text-muted-foreground">{formatDate(event.timestamp)}</span>
-                                                        </div>
-                                                        <div className="p-4 bg-muted/20 hover:bg-muted/30 transition-colors rounded-xl border border-border/50 text-sm">
-                                                            <div className="flex items-center gap-6 mb-3">
-                                                                <div className={`px-3 py-1 rounded-lg text-xs font-bold uppercase ${event.operation === 'Buy' ? 'bg-green-500/20 text-green-400' : event.operation === 'Sell' ? 'bg-red-500/20 text-red-400' : 'bg-muted text-muted-foreground'}`}>
-                                                                    {event.operation}
-                                                                </div>
-                                                                <div className="flex flex-col">
-                                                                    <span className="text-[9px] text-muted-foreground uppercase font-bold">Confidence</span>
-                                                                    <span className="font-bold text-lg">{(event.probability_score * 100).toFixed(0)}%</span>
-                                                                </div>
-                                                                {event.wait_reason && (
-                                                                    <div className="flex flex-col">
-                                                                        <span className="text-[9px] text-muted-foreground uppercase font-bold">Wait Reason</span>
-                                                                        <span className="font-medium text-xs text-orange-400">{event.wait_reason}</span>
-                                                                    </div>
-                                                                )}
-                                                            </div>
-                                                            <p className="text-muted-foreground leading-relaxed italic border-l-2 border-primary/30 pl-3">{event.rationale}</p>
-                                                        </div>
-                                                    </div>
-                                                );
-                                            }
-
-                                            if (event.type === 'execution') {
-                                                return (
-                                                    <div key={`exc-${idx}`} className="relative pl-8 border-l-2 border-primary/20 pb-4 last:pb-0 group">
-                                                        <div className="absolute -left-[9px] top-0 p-1 bg-background border-2 border-primary rounded-full transition-transform group-hover:scale-110">
-                                                            <Zap size={12} className="text-primary" />
-                                                        </div>
-                                                        <div className="mb-2 flex items-center gap-3">
-                                                            <h4 className="font-bold text-xs uppercase tracking-wider text-primary">Trade Execution</h4>
-                                                            <span className="text-[10px] text-muted-foreground">{formatDate(event.timestamp)}</span>
-                                                        </div>
-                                                        <div className={`p-4 rounded-xl border flex justify-between items-center transition-colors ${event.status === 'FILLED' ? 'bg-green-500/10 border-green-500/30' : 'bg-muted/20 border-border/50'}`}>
-                                                            <div className="flex items-center gap-4">
-                                                                <div className={event.side === 'BUY' ? 'text-green-400' : 'text-red-400'}>
-                                                                    {event.side === 'BUY' ? <ArrowUpRight size={24} /> : <ArrowDownRight size={24} />}
-                                                                </div>
-                                                                <div>
-                                                                    <span className="block font-bold text-base leading-none mb-1">{event.side} {event.symbol}</span>
-                                                                    <span className={`text-[10px] uppercase font-bold px-1.5 py-0.5 rounded ${event.status === 'FILLED' ? 'bg-green-500/20 text-green-400' : 'bg-muted text-muted-foreground'}`}>{event.status}</span>
-                                                                </div>
-                                                            </div>
-                                                            <div className="text-right">
-                                                                <span className="block font-mono font-bold text-lg">${event.executed_price?.toFixed(2) || '--'}</span>
-                                                                <span className="text-[10px] text-muted-foreground uppercase font-bold">{event.executed_amount || '0'} Units</span>
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                );
-                                            }
-                                            return null;
-                                        });
-                                    })()}
+                                            ...(currentRunDetails.events || []).map((ev: any) => {
+                                                // Preserve timestamp from event, merge data properties
+                                                const eventTimestamp = ev.timestamp;
+                                                return { ...(ev.data || {}), ...ev, timestamp: eventTimestamp };
+                                            }),
+                                        ].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())}
+                                        formatDate={formatDate}
+                                    />
                                 </div>
                             </div>
                         </>
