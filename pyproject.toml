@@ -20,4 +20,5 @@ dependencies = [
     "fastapi>=0.125.0",
     "uvicorn>=0.38.0",
     "websockets>=15.0.1",
+    "ta-lib>=0.6.8",
 ]
