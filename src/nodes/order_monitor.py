@@ -7,7 +7,7 @@
 
 from datetime import datetime, timezone
 from typing import cast
-from ..trading.exchange_client import get_client
+from ..trading.exchange_client import get_client, normalize_symbol
 from ..logger import get_logger
 from ..utils.event_bus import get_event_bus
 from ..state import TradingState
@@ -120,10 +120,10 @@ def monitor_pending_order(state: TradingState) -> TradingState:
                 # 订单已成交，切换到持仓管理模式
                 logger.info(f"✅ Order {order_id} filled. Switching to position management.")
                 
-                # 获取实际持仓
+                normalized_symbol = normalize_symbol(symbol)
                 positions = client.get_positions()
                 position = next(
-                    (p for p in positions if p.symbol == symbol),
+                    (p for p in positions if normalize_symbol(p.symbol) == normalized_symbol),
                     None
                 )
                 
@@ -202,10 +202,10 @@ def confirm_order_fill(state: TradingState) -> TradingState:
         if order_result.status in ["filled", "closed"]:
             logger.info(f"✅ Order {order_id} FILLED")
             
-            # 获取真实持仓
+            normalized_symbol = normalize_symbol(symbol)
             positions = client.get_positions()
             position = next(
-                (p for p in positions if p.symbol == symbol),
+                (p for p in positions if normalize_symbol(p.symbol) == normalized_symbol),
                 None
             )
             

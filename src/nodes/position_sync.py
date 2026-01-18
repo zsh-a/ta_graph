@@ -5,7 +5,7 @@
 """
 
 from typing import TypedDict
-from ..trading.exchange_client import get_client
+from ..trading.exchange_client import get_client, normalize_symbol
 from ..database.account_manager import get_account_manager
 from ..logger import get_logger
 from ..notification.alerts import send_alert
@@ -23,13 +23,16 @@ def sync_position_state(state: dict) -> dict:
             logger.warning("No symbol in state, skipping sync")
             return state
         
+        # Normalize symbol for reliable matching (e.g., ETH/USDT -> ETH/USDT:USDT)
+        normalized_symbol = normalize_symbol(symbol)
+        
         # 从 AccountManager 获取账户信息和持仓
         am = get_account_manager()
         account_info = am.get_account_info()
         real_positions = account_info.positions
         
         real_position = next(
-            (p for p in real_positions if p['symbol'] == symbol),
+            (p for p in real_positions if normalize_symbol(p['symbol']) == normalized_symbol),
             None
         )
         

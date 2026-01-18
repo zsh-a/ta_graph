@@ -69,10 +69,12 @@ def init_node(state: TradingState) -> TradingState:
     current_status = state.get("status")
     if current_position:
         updates["status"] = "managing_position"
+        updates["next_action"] = "manage"
     elif current_order:
         # If order exists but position doesn't, sync order info
         updates["status"] = "order_pending"
         updates["pending_order_id"] = current_order["id"]
+        updates["next_action"] = "manage"
         
         # Use order timestamp if available, format to ISO
         if current_order.get("timestamp"):
@@ -84,6 +86,7 @@ def init_node(state: TradingState) -> TradingState:
         logger.info(f"🔄 Synced existing open order: {current_order['id']} at {updates['order_placed_time']}")
     elif state.get("pending_order_id"):
         updates["status"] = "order_pending"
+        updates["next_action"] = "manage"
     elif current_status in [
         None,
         "hunting",
@@ -93,8 +96,9 @@ def init_node(state: TradingState) -> TradingState:
         "looking_for_trade",
     ]:
         # If no position/order, and currently in a "working" state (or old legacy state),
-        # ensure it's set to looking_for_trade
+        # ensure it's set to looking_for_trade and next_action is scan
         updates["status"] = "looking_for_trade"
+        updates["next_action"] = "scan"
 
     logger.info(
         f"✓ Initialization complete (Balance: ${account_info.total_balance:.2f}, Position: {'Yes' if current_position else 'No'})"

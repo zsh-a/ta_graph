@@ -8,11 +8,11 @@ Implements Brooks' trailing stop modes based on the TradingPlan:
 4. BREAKEVEN - Move to breakeven after reaching 1R profit
 """
 
-from typing import Literal, Any
+from typing import Any
 from dataclasses import dataclass
 from enum import Enum
 
-from ..trading.exchange_client import get_client, normalize_symbol
+from ..trading.exchange_client import get_client
 from ..logger import get_logger
 from ..notification.alerts import notify_trade_event
 from ..state import TradingState
@@ -313,14 +313,11 @@ def guard_position(state: TradingState) -> dict[str, Any]:
         updated_position = {**position, "stop_loss": stop_update.new_stop}
         
         notify_trade_event(
-            event_type="STOP_UPDATED",
-            details={
-                "old_stop": position.get("stop_loss"),
-                "new_stop": stop_update.new_stop,
-                "mode": stop_update.mode_used.value,
-                "reason": stop_update.reason,
-                "exchange_updated": update_success
-            }
+            event="stop_moved",
+            state=dict(state),
+            old_stop=position.get("stop_loss"),
+            new_stop=stop_update.new_stop,
+            reason=stop_update.reason
         )
         
         return {
@@ -359,14 +356,13 @@ def _update_stop_on_exchange(state: TradingState, new_stop: float) -> bool:
         # Implementation depends on exchange API
         position = state.get("position", {})
         side = position.get("side", "long")
-        size = position.get("size", 0)
         
         if side.lower() in ("long", "buy"):
             # For long position, stop sell order
-            stop_side = "sell"
+            pass
         else:
             # For short position, stop buy order
-            stop_side = "buy"
+            pass
         
         # Note: Actual implementation would need to:
         # 1. Find and cancel existing stop order
