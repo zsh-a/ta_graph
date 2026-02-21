@@ -9,7 +9,9 @@ Provides:
 """
 import functools
 import time
-from typing import Any, Callable, Optional, Type, Union
+from typing import Callable, cast
+from collections.abc import Mapping
+from ..state import AgentState
 from ..logger import get_logger
 
 logger = get_logger(__name__)
@@ -22,8 +24,9 @@ logger = get_logger(__name__)
 class NodeError(Exception):
     """Base class for node execution errors."""
     retryable: bool = True
+    details: dict[str, object]
     
-    def __init__(self, message: str, details: Optional[dict] = None):
+    def __init__(self, message: str, details: dict[str, object] | None = None):
         super().__init__(message)
         self.details = details or {}
 
@@ -34,7 +37,7 @@ class APIError(NodeError):
     
     Examples: Network timeout, rate limits, temporary unavailability.
     """
-    retryable = True
+    retryable: bool = True
 
 
 class ValidationError(NodeError):
@@ -43,7 +46,7 @@ class ValidationError(NodeError):
     
     Examples: Missing required fields, invalid schema, type mismatches.
     """
-    retryable = False
+    retryable: bool = False
 
 
 class ConfigurationError(NodeError):
@@ -52,7 +55,7 @@ class ConfigurationError(NodeError):
     
     Examples: Missing API keys, invalid model names.
     """
-    retryable = False
+    retryable: bool = False
 
 
 class DataError(NodeError):
@@ -61,7 +64,7 @@ class DataError(NodeError):
     
     Examples: Empty market data, stale prices.
     """
-    retryable = True  # May be resolved by refetching
+    retryable: bool = True  # May be resolved by refetching
 
 
 # =========================================================================
@@ -72,9 +75,9 @@ def with_error_handling(
     max_retries: int = 2,
     retry_delay: float = 1.0,
     exponential_backoff: bool = True,
-    fallback_fn: Optional[Callable] = None,
+    fallback_fn: Callable[..., dict[str, object]] | None = None,
     error_state_key: str = "errors",
-    retryable_exceptions: tuple = (APIError, DataError, ConnectionError, TimeoutError),
+    retryable_exceptions: tuple[type[Exception], ...] = (APIError, DataError, ConnectionError, TimeoutError),
 ):
     """
     Unified error handling decorator for LangGraph nodes.
@@ -100,10 +103,10 @@ def with_error_handling(
     Returns:
         Decorated function with error handling
     """
-    def decorator(func: Callable) -> Callable:
+    def decorator(func: Callable[..., dict[str, object]]) -> Callable[..., dict[str, object]]:
         @functools.wraps(func)
-        def wrapper(state: dict, *args, **kwargs) -> dict:
-            last_error: Optional[Exception] = None
+        def wrapper(state: AgentState, *args: object, **kwargs: object) -> dict[str, object]:
+            last_error: Exception | None = None
             func_name = func.__name__
             
             for attempt in range(max_retries + 1):
@@ -123,8 +126,7 @@ def with_error_handling(
                     
                     delay = retry_delay * (2 ** attempt if exponential_backoff else 1)
                     logger.warning(
-                        f"[{func_name}] Retry {attempt + 1}/{max_retries} "
-                        f"after {delay:.1f}s: {e}"
+                        f"[{func_name}] Retry {attempt + 1}/{max_retries} after {delay:.1f}s: {e}"
                     )
                     time.sleep(delay)
                     
@@ -137,8 +139,7 @@ def with_error_handling(
                     
                     delay = retry_delay * (2 ** attempt if exponential_backoff else 1)
                     logger.warning(
-                        f"[{func_name}] Retrying ({attempt + 1}/{max_retries}) "
-                        f"after {delay:.1f}s: {type(e).__name__}: {e}"
+                        f"[{func_name}] Retrying ({attempt + 1}/{max_retries}) after {delay:.1f}s: {type(e).__name__}: {e}"
                     )
                     time.sleep(delay)
                     
@@ -150,8 +151,7 @@ def with_error_handling(
             
             # All retries exhausted - use fallback or return error state
             logger.error(
-                f"[{func_name}] Failed after {max_retries + 1} attempts. "
-                f"Last error: {last_error}"
+                f"[{func_name}] Failed after {max_retries + 1} attempts. Last error: {last_error}"
             )
             
             if fallback_fn:
@@ -163,7 +163,7 @@ def with_error_handling(
                     last_error = fallback_error
             
             # Return error state for graph to handle
-            current_errors = list(state.get(error_state_key, []) or [])
+            current_errors = list(cast(list[str], state.get(error_state_key, [])) or [])
             error_entry = {
                 "node": func_name,
                 "error": str(last_error),
@@ -184,10 +184,10 @@ def with_error_handling(
 # =========================================================================
 
 def create_safe_hold_state(
-    state: dict,
+    state: Mapping[str, object],
     reason: str,
     node_name: str = "unknown"
-) -> dict:
+) -> dict[str, object]:
     """
     Create a safe Hold state when node execution fails.
     
@@ -201,10 +201,10 @@ def create_safe_hold_state(
     Returns:
         Dict with Hold decision
     """
-    from ..nodes.brooks_analyzer import create_hold_decision
+    from ..models.decisions import create_hold_decision
     
-    symbol = state.get("symbol", "BTC")
-    brooks_analysis = state.get("brooks_analysis")
+    symbol = str(state.get("symbol", "BTC"))
+    brooks_analysis = cast(Mapping[str, object] | None, state.get("brooks_analysis"))
     
     return {
         "decisions": [create_hold_decision(
@@ -212,5 +212,5 @@ def create_safe_hold_state(
             wait_reason=f"[{node_name}] {reason}",
             brooks_analysis=brooks_analysis
         )],
-        "warnings": state.get("warnings", []) + [f"Fallback triggered: {reason}"]
+        "warnings": list(cast(list[str], state.get("warnings", []))) + [f"Fallback triggered: {reason}"]
     }

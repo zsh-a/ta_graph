@@ -24,67 +24,14 @@ from ..utils.event_bus import get_event_bus
 
 logger = get_logger(__name__)
 
-# ==================== Pydantic Models ====================
-
-class SignalBarQuality(BaseModel):
-    """Detailed evaluation of the most recent completed bar"""
-    bar_index: int = Field(description="Bar index (0 = current, -1 = signal bar)")
-    quality_score: int = Field(ge=0, le=10, description="0-10 quality score")
-    bar_type: Literal["strong_bull", "weak_bull", "doji", "weak_bear", "strong_bear"]
-    body_size_percent: float = Field(description="Body as % of total range (0-100)")
-    tail_ratio: float = Field(description="Total tail length / body length")
-    follow_through: bool = Field(description="Good continuation from previous bar")
-    closes_near: Literal["high", "mid", "low"] = Field(description="Where bar closes relative to its range")
-    
-class BrooksPattern(BaseModel):
-    """Detected Brooks pattern"""
-    pattern_type: Literal[
-        "wedge_top", "wedge_bottom",
-        "high_1", "high_2", "low_1", "low_2",
-        "mtr_top", "mtr_bottom",
-        "failed_breakout", "ttr"
-    ]
-    confidence: Literal["high", "medium", "low"]
-    bars_involved: list[int] = Field(description="Bar indices involved in pattern")
-    description: str
-
-class RiskAssessment(BaseModel):
-    """Proposed trade risk parameters"""
-    stop_loss_price: float
-    take_profit_price: float
-    reward_to_risk_ratio: float = Field(description="Target Reward / Risk. Should be >= 2.0 ideally.")
-    stop_loss_type: Literal["swing_low", "swing_high", "bar_extreme", "measured_move"]
-    leverage_suggestion: int = Field(ge=1, le=20, default=5)
-
-class BrooksAnalysis(BaseModel):
-    """Complete Al Brooks price action analysis"""
-    # Market State
-    market_cycle: Literal[
-        "strong_bull_trend", "weak_bull_trend",
-        "strong_bear_trend", "weak_bear_trend",
-        "trading_range", "breakout_mode", "climax"
-    ]
-    always_in_direction: Literal["long", "short", "neutral"]
-    
-    # Signal Bar
-    signal_bar: SignalBarQuality
-    
-    # Patterns
-    detected_patterns: list[BrooksPattern] = Field(default_factory=list)
-    
-    # Pressure Analysis
-    buying_pressure: int = Field(ge=0, le=10, description="0-10 scale")
-    selling_pressure: int = Field(ge=0, le=10, description="0-10 scale")
-    
-    # Context
-    context_summary: str = Field(description="What happened in the last 20-50 bars")
-    ema20_relationship: Literal["strong_above", "above", "at", "below", "strong_below"]
-    
-    # Trading Guidance
-    recommended_action: Literal["buy_setup", "sell_setup", "wait"]
-    wait_reason: str | None = None
-    setup_quality: int = Field(ge=0, le=10, description="Overall setup quality 0-10")
-    risk_assessment: RiskAssessment | None = Field(description="Required if action is NOT wait")
+from ..models.decisions import (
+    BrooksSignalBarQuality,
+    BrooksPattern,
+    BrooksRiskAssessment,
+    BrooksAnalysis,
+    create_hold_decision,
+    should_force_hold
+)
 
 # ==================== Prompts ====================
 
@@ -186,7 +133,7 @@ def create_brooks_messages(
     chart_image_path: str,
     focus_chart_path: str | None = None,
     htf_chart_path: str | None = None
-) -> list:
+) -> list[HumanMessage]:
     """Create message list with text and image(s) for VL model"""
     
     def encode_image(path: str) -> str:
@@ -525,51 +472,4 @@ HTF Signal: {htf_analysis.get('signal', 'Unknown')}
             "validation_result": {"valid": False, "errors": [str(e)], "warnings": []}
         }
 
-# ==================== Helper Functions ====================
-
-def create_hold_decision(symbol: str, wait_reason: str, brooks_analysis: dict | None = None) -> dict:
-    """Create a Hold decision with Brooks context"""
-    return {
-        "operation": "Hold",
-        "symbol": symbol,
-        "wait_reason": wait_reason,
-        "probability_score": 0.0,
-        "rationale": f"[Brooks Analysis]: {wait_reason}",
-        "buy": None,
-        "sell": None,
-        "prediction": {
-            "price_action_bias": brooks_analysis.get('always_in_direction', 'neutral') if brooks_analysis else 'neutral',
-            "market_structure": brooks_analysis.get('market_cycle', 'ranging') if brooks_analysis else 'ranging',
-            "confidence": "low",
-            "market_phases": [],
-            "key_levels": {"support": 0, "resistance": 0}
-        }
-    }
-
-def should_force_hold(brooks_analysis: dict) -> tuple[bool, str]:
-    """
-    Determine if Brooks analysis mandates a Hold decision.
-    
-    Returns:
-        (should_hold: bool, reason: str)
-    """
-    # Rule 1: TTR with poor signal bar
-    if brooks_analysis['market_cycle'] == 'trading_range':
-        if brooks_analysis['signal_bar']['quality_score'] < 7:
-            return True, "Tight Trading Range with low quality signal bar (< 7/10)"
-    
-    # Rule 2: Setup quality too low
-    if brooks_analysis['setup_quality'] < 6:
-        return True, f"Overall setup quality {brooks_analysis['setup_quality']}/10 is below threshold (need 6+)"
-    
-    # Rule 3: VL model recommended wait
-    if brooks_analysis['recommended_action'] == 'wait':
-        reason = brooks_analysis.get('wait_reason', 'Al Brooks says wait')
-        return True, reason
-    
-    # Rule 4: Validation errors
-    if '_validation' in brooks_analysis:
-        if not brooks_analysis['_validation']['valid']:
-            return True, f"Validation errors detected: {brooks_analysis['_validation']['errors']}"
-    
-    return False, ""
+# Helper functions moved to src/models/decisions.py

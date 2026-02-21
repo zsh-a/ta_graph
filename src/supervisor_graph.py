@@ -11,6 +11,7 @@
 import os
 from datetime import datetime, timezone
 from typing import Literal, cast, Any
+from collections.abc import Mapping
 
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, StateGraph
@@ -142,7 +143,7 @@ def risk_guard_node(state: TradingState) -> TradingState:
     # 通过风控
     logger.debug("✓ Risk guard passed")
     emit_node_event("node_complete", "risk_guard", {"passed": True})
-    return cast(TradingState, cast(Any, {
+    return cast(TradingState, cast(object, {
         "is_trading_enabled": True,
         "loop_count": state.get("loop_count", 0) + 1,
         "last_update": datetime.now(timezone.utc).isoformat(),
@@ -196,10 +197,10 @@ def post_scanner_node(state: TradingState) -> dict:
     exec_results = state.get("execution_results", [])
     if exec_results:
         for res_raw in exec_results:
-            res: dict[str, Any] = cast(dict[str, Any], res_raw)
+            res: Mapping[str, object] = res_raw
             order_id = cast(str | None, res.get("order_id") or res.get("execution_id"))
             if order_id:
-                status: str = res.get("execution_status", "PENDING")
+                status: str = str(res.get("execution_status", "PENDING"))
                 logger.info(f"📝 Execution result: {order_id} (Status: {status})")
 
                 if status == "FILLED":
@@ -208,7 +209,7 @@ def post_scanner_node(state: TradingState) -> dict:
                         {
                             "status": "managing_position",
                             "position": {
-                                "side": cast(str, res.get("side", "long")).lower(),
+                                "side": str(res.get("side", "long")).lower(),
                                 "entry_price": res.get("executed_price")
                                 or res.get("entry_price"),
                                 "size": res.get("executed_amount") or res.get("amount"),
@@ -361,7 +362,7 @@ def supervisor_router(
 # ========== 构建监督者图 ==========
 
 
-def build_trading_supervisor(checkpointer=None) -> CompiledStateGraph[TradingState, Any, TradingState]:
+def build_trading_supervisor(checkpointer: Any = None) -> CompiledStateGraph[TradingState, Any, TradingState]: # type: ignore
     """
     构建交易系统监督者图
 
@@ -442,7 +443,7 @@ def build_trading_supervisor(checkpointer=None) -> CompiledStateGraph[TradingSta
 
 def build_trading_supervisor_with_hitl(
     enable_persistence: bool = True, db_path: str = "./data/trading_state.db"
-) -> CompiledStateGraph[TradingState, Any, TradingState]:
+) -> CompiledStateGraph[TradingState, Any, TradingState]: # type: ignore
     """
     构建支持人工审批的监督者图
 
@@ -467,8 +468,8 @@ def build_trading_supervisor_with_hitl(
     memory = SqliteSaver.from_conn_string(db_path) if enable_persistence else None
 
     app = builder.compile(
-        checkpointer=cast(Any, memory),
+        checkpointer=cast(Any, memory), # type: ignore
         interrupt_before=["approval"],  # 在审批前暂停
     )
 
-    return cast(CompiledStateGraph[TradingState, Any, TradingState, TradingState], app)
+    return cast(CompiledStateGraph[TradingState, Any, TradingState], app) # type: ignore

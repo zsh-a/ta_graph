@@ -3,11 +3,7 @@ Enhanced Strategy Node with Dynamic Prompts and Trade Filters
 Integrates Brooks analysis and applies anti-overtrading filters.
 """
 
-import os
 import json
-from typing import List, Literal, Union, Dict, Any
-from pydantic import BaseModel, Field
-from langfuse.openai import OpenAI
 from langfuse import observe
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -15,11 +11,10 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from ..state import AgentState
 from ..prompts import get_trading_system_prompt, get_user_prompt_parts, get_dynamic_trading_prompt
 from ..logger import get_logger
-from ..database import get_session, ModelType, OperationType, SymbolType, Chat
-from ..database.trading_history import create_trading_record
+from ..database import ModelType
 from ..utils.model_manager import get_llm
 from ..utils.trade_filters import get_trade_filter
-from ..nodes.brooks_analyzer import create_hold_decision, should_force_hold
+# from ..nodes.brooks_analyzer import create_hold_decision, should_force_hold
 from ..utils.timeout_decorator import with_timeout
 from ..utils.event_bus import get_event_bus
 import asyncio
@@ -27,82 +22,21 @@ import asyncio
 load_dotenv()
 logger = get_logger(__name__)
 
-# (Keep existing Pydantic models - EntryPriceRule, StopLossPriceRule, etc.)
-# ... [Previous model definitions remain the same] ...
-
-class EntryPriceRule(BaseModel):
-    type: Literal["bar_high", "bar_low", "bar_close", "current_price"]
-    barIndex: int = Field(description="Entry trigger bar index (0 = current, -1 = previous)")
-    offset: int | None = Field(default=None, description="Offset in ticks")
-
-class StopLossPriceRule(BaseModel):
-    type: Literal["bar_high", "bar_low", "pattern_high", "pattern_low", "swing_high", "swing_low"]
-    barIndex: int | None = Field(default=None)
-    patternStartBar: int | None = Field(default=None)
-    patternEndBar: int | None = Field(default=None)
-    swingStartBar: int | None = Field(default=None)
-    swingEndBar: int | None = Field(default=None)
-    offset: int | None = Field(default=None)
-    offsetPercent: float | None = Field(default=None)
-
-class TakeProfitPriceRule(BaseModel):
-    type: Literal["measured_move", "risk_multiple", "key_level"]
-    measuredMoveBarStart: int | None = Field(default=None)
-    measuredMoveBarEnd: int | None = Field(default=None)
-    riskMultiple: float | None = Field(default=None)
-    keyLevel: float | None = Field(default=None)
-
-class BuyDecision(BaseModel):
-    orderType: Literal["STOP", "LIMIT", "MARKET"]
-    entryPriceRule: EntryPriceRule
-    stopLossPriceRule: StopLossPriceRule
-    takeProfitPriceRule: TakeProfitPriceRule
-    riskPercent: float = Field(ge=0.5, le=2.0, description="Risk percentage (0.5-2.0%)")
-
-class SellDecision(BaseModel):
-    orderType: Literal["STOP", "LIMIT", "MARKET"]
-    entryPriceRule: EntryPriceRule
-    stopLossPriceRule: StopLossPriceRule
-    takeProfitPriceRule: TakeProfitPriceRule
-    riskPercent: float = Field(ge=0.5, le=2.0, description="Risk percentage (0.5-2.0%)")
-
-class AdjustProfit(BaseModel):
-    stopLoss: float | None = None
-    takeProfit: float | None = None
-
-class MarketPhase(BaseModel):
-    phase_type: Literal["strong_bull_trend", "weak_bull_trend", "strong_bear_trend", "weak_bear_trend", "trading_range", "breakout_attempt", "reversal"]
-    start_bar: int
-    end_bar: int
-    description: str
-
-class KeyLevels(BaseModel):
-    support: float
-    resistance: float
-
-class Prediction(BaseModel):
-    price_action_bias: Literal["bullish", "bearish", "neutral"]
-    market_structure: Literal["trending", "ranging", "transition"]
-    confidence: Literal["high", "medium", "low"]
-    market_phases: List[MarketPhase] = Field(min_length=2, max_length=4)
-    key_levels: KeyLevels
-    setup_type: Literal["pullback", "breakout", "failure_test", "two_way_scalp", "none"] | None = "none"
-    primary_timeframe: str | None = None
-
-class TradingDecision(BaseModel):
-    operation: Literal["Buy", "Sell", "Hold"]
-    symbol: str
-    wait_reason: str | None = None
-    probability_score: float = Field(description="Probability score 0-100")
-    cancelOrderIds: List[str] | None = None
-    rationale: str
-    buy: BuyDecision | None = None
-    sell: SellDecision | None = None
-    adjustProfit: AdjustProfit | None = None
-    prediction: Prediction
-
-class DecisionResponse(BaseModel):
-    decisions: List[TradingDecision] = Field(min_length=1, max_length=1)
+from ..models.decisions import (
+    EntryPriceRule,
+    StopLossPriceRule,
+    TakeProfitPriceRule,
+    BuyDecision,
+    SellDecision,
+    AdjustProfit,
+    MarketPhase,
+    KeyLevels,
+    Prediction,
+    TradingDecision,
+    DecisionResponse,
+    create_hold_decision,
+    should_force_hold
+)
 
 
 # ==================== Fallback Function ====================
