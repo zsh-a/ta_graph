@@ -32,12 +32,24 @@ echo "6. Testing Heartbeat Monitor..."
 uv run pytest tests/monitoring/test_heartbeat.py -v
 
 echo ""
+echo "7. Testing Trade Filters..."
+uv run pytest tests/utils/test_trade_filters.py -v
+
+echo ""
+echo "8. Testing Price Calculator..."
+uv run pytest tests/utils/test_price_calculator.py -v
+
+echo ""
+echo "9. Testing L0 Preprocessor..."
+uv run pytest tests/utils/test_l0_preprocessor.py -v
+
+echo ""
 echo "=========================================="
 echo "Running Integration Tests"
 echo "=========================================="
 
 echo ""
-echo "7. Testing Complete Workflow..."
+echo "10. Testing Complete Workflow..."
 uv run pytest tests/integration/test_workflow.py -v
 
 echo ""
@@ -46,4 +58,4 @@ echo "Test Summary"
 echo "=========================================="
 
 # Run all tests with coverage
-uv run pytest tests/ -v --cov=src/nodes --cov=src/safety --cov=src/monitoring --cov-report=term-missing
+uv run pytest tests/ -v --cov=src/nodes --cov=src/safety --cov=src/monitoring --cov=src/utils --cov-report=term-missing

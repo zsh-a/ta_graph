@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 from langchain_core.messages import HumanMessage
 from langfuse import observe
 
-from ..state import AgentState
+from ..state import TradingState
 from ..logger import get_logger
 from ..utils.model_manager import get_llm
 from ..utils.timeout_decorator import with_timeout
@@ -268,7 +268,7 @@ def validate_brooks_analysis(
 
 # ==================== Fallback Function ====================
 
-def brooks_fallback(state: AgentState) -> dict:
+def brooks_fallback(state: TradingState) -> dict:
     """
     Fallback if Brooks analysis times out.
     Returns conservative Hold recommendation.
@@ -305,8 +305,8 @@ def brooks_fallback(state: AgentState) -> dict:
 
 @observe()
 @with_timeout(timeout_seconds=120, fallback_fn=brooks_fallback, operation_name="Brooks Analysis")
-@with_error_handling(max_retries=2, fallback_fn=brooks_fallback, retryable_exceptions=(APIError, ConnectionError, TimeoutError))
-def brooks_analyzer(state: AgentState) -> dict:
+@with_error_handling(max_retries=2, retryable_exceptions=(APIError, ConnectionError, TimeoutError))
+def brooks_analyzer(state: TradingState) -> dict:
     """
     Brooks-specific price action analysis node.
     

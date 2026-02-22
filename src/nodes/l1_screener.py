@@ -9,11 +9,13 @@ import json
 from datetime import datetime, timezone
 from langfuse import observe
 
-from ..state import AgentState
+from ..state import TradingState
 from ..logger import get_logger
 from ..models.market_state import MarketStateSnapshot, L1ScreenerResponse
 from ..utils.model_manager import get_l1_model
 from ..utils.event_bus import get_event_bus
+from ..utils.error_handler import with_error_handling
+from ..utils.timeout_decorator import with_timeout
 
 logger = get_logger(__name__)
 bus = get_event_bus()
@@ -87,10 +89,26 @@ Respond with JSON matching this schema:
 """
 
 
+# ==================== Fallback Function ====================
+
+def l1_fallback(state: TradingState) -> dict:
+    """
+    L1 筛选超时或失败时的回退函数
+    """
+    logger.warning("⚠️ L1 fallback triggered - proceeding without L1 analysis")
+    return {
+        "l1_setup_detected": False,
+        "l1_reasoning": "L1 analysis skipped (fallback)",
+        "warnings": (state.get("warnings") or []) + ["L1 analysis was skipped"]
+    }
+
+
 # ==================== Node Function ====================
 
 @observe()
-def l1_screen(state: AgentState) -> dict:
+@with_timeout(timeout_seconds=60, fallback_fn=l1_fallback, operation_name="L1 Screening")
+@with_error_handling(max_retries=1, fallback_fn=l1_fallback)
+def l1_screen(state: TradingState) -> dict:
     """
     L1 文本模型筛选节点
     
@@ -216,17 +234,3 @@ def l1_screen(state: AgentState) -> dict:
             "l1_reasoning": f"L1 screening failed: {e}",
             "errors": state.get("errors", []) + [f"L1 screening error: {e}"]
         }
-
-
-# ==================== Fallback Function ====================
-
-def l1_fallback(state: AgentState) -> dict:
-    """
-    L1 筛选超时或失败时的回退函数
-    """
-    logger.warning("⚠️ L1 fallback triggered - proceeding without L1 analysis")
-    return {
-        "l1_setup_detected": False,
-        "l1_reasoning": "L1 analysis skipped (fallback)",
-        "warnings": (state.get("warnings") or []) + ["L1 analysis was skipped"]
-    }

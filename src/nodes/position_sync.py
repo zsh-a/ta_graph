@@ -5,15 +5,18 @@
 """
 
 from typing import TypedDict
+from langfuse import observe
 from ..trading.exchange_client import get_client, normalize_symbol
 from ..database.account_manager import get_account_manager
 from ..logger import get_logger
 from ..notification.alerts import send_alert
+from ..state import TradingState
 
 logger = get_logger(__name__)
 
 
-def sync_position_state(state: dict) -> dict:
+@observe()
+def sync_position_state(state: TradingState) -> dict:
     """
     强制与交易所对账
     """
@@ -88,30 +91,38 @@ def sync_position_state(state: dict) -> dict:
         # 情况 3: 两边都有持仓，但数据不一致
         if system_has_position and exchange_has_position:
             system_position = state.get("position", {})
-            
+            updated_position = {**system_position}
+            needs_update = False
+
             # 检查仓位大小
             size_diff = abs(real_position.get("size", 0) - system_position.get("size", 0))
             if size_diff > 0.0001:
                 logger.warning(f"Position size mismatch for {symbol}")
-                state["position"]["size"] = real_position.get("size")
-                state["position"]["unrealized_pnl"] = real_position.get("unrealized_pnl")
-            
+                updated_position["size"] = real_position.get("size")
+                updated_position["unrealized_pnl"] = real_position.get("unrealized_pnl")
+                needs_update = True
+
             # 检查入场价格
             price_diff = abs(real_position.get("entry_price", 0) - system_position.get("entry_price", 0))
             if price_diff > 0.01:
                 logger.warning(f"Entry price mismatch for {symbol}")
-                state["position"]["entry_price"] = real_position.get("entry_price")
-        
+                updated_position["entry_price"] = real_position.get("entry_price")
+                needs_update = True
+
+            if needs_update:
+                logger.debug(f"✅ Position sync complete for {symbol} (updated)")
+                return {"position": updated_position}
+
         logger.debug(f"✅ Position sync complete for {symbol}")
-        return state
-    
+        return {}
+
     except Exception as e:
         logger.error(f"Error during position sync: {e}")
-        state["sync_error"] = str(e)
-        return state
+        return {"sync_error": str(e)}
 
 
-def check_position_health(state: dict) -> dict:
+@observe()
+def check_position_health(state: TradingState) -> dict:
     """
     检查持仓健康状态
     

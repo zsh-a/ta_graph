@@ -15,7 +15,6 @@ from .nodes.order_monitor import monitor_pending_order
 from .nodes.position_sync import sync_position_state, check_position_health
 from .nodes.position_guard import guard_position  # Position Guard with trail stops
 from .nodes.followthrough_analyzer import analyze_followthrough
-from .nodes.risk_manager import manage_risk, check_stop_hit
 from .safety import get_equity_protector, ConvictionTracker, check_hallucination_guard
 from .logger import get_logger
 
@@ -63,26 +62,23 @@ def create_position_management_workflow() -> StateGraph:
     workflow = StateGraph(TradingState)
     
     # ========== Loop B: Managing Mode 节点 ==========
-    
+
     # 1. 订单监控
     workflow.add_node("monitor_order", monitor_pending_order)
     # Note: confirm_fill is not used in current flow, removed to fix subgraph visualization
-    
+
     # 2. 持仓状态对账
     workflow.add_node("sync_position", sync_position_state)
     workflow.add_node("check_health", check_position_health)
-    
+
     # 3. Position Guard - Automated trail stop management
+    #    (Absorbs risk_manager's breakeven + trailing stop logic)
     workflow.add_node("guard_position", guard_position)
-    
+
     # 4. Follow-through 分析
     workflow.add_node("analyze_followthrough", analyze_followthrough)
-    
-    # 5. 风险管理
-    workflow.add_node("manage_risk", manage_risk)
-    workflow.add_node("check_stop", check_stop_hit)
-    
-    # 6. 安全检查
+
+    # 5. 安全检查
     workflow.add_node("safety_check", perform_safety_check)
     
     # ========== 条件边：状态路由 ==========
@@ -104,17 +100,12 @@ def create_position_management_workflow() -> StateGraph:
             return "sync_position"
         else:
             return END
-    
-    def route_after_stop_check(state: TradingState) -> str:
-        """止损检查后的路由"""
-        # 持仓管理完成，返回主循环
-        return END
-    
+
     # ========== 添加边 ==========
-    
+
     # Entry point
     workflow.set_entry_point("safety_check")
-    
+
     # Safety check -> Route by status
     workflow.add_conditional_edges(
         "safety_check",
@@ -125,7 +116,7 @@ def create_position_management_workflow() -> StateGraph:
             END: END
         }
     )
-    
+
     # Order monitoring flow
     workflow.add_conditional_edges(
         "monitor_order",
@@ -135,15 +126,13 @@ def create_position_management_workflow() -> StateGraph:
             END: END
         }
     )
-    
-    # Position management flow (updated with guard_position)
+
+    # Position management flow
+    # guard_position now handles breakeven + trailing stops (previously in risk_manager)
     workflow.add_edge("sync_position", "check_health")
-    workflow.add_edge("check_health", "guard_position")  # Add position guard
+    workflow.add_edge("check_health", "guard_position")
     workflow.add_edge("guard_position", "analyze_followthrough")
-    workflow.add_edge("analyze_followthrough", "manage_risk")
-    workflow.add_edge("manage_risk", "check_stop")
-    
-    workflow.add_edge("check_stop", END)
+    workflow.add_edge("analyze_followthrough", END)
     
     return workflow
 

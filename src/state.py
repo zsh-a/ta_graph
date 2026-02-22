@@ -6,6 +6,10 @@
 1. 扁平化常用字段（symbol, status, timeframe）
 2. 模块化专业字段（analysis, execution, risk）
 3. 强类型化（尽量通过 TypedDict 约束）
+
+Field Ownership Legend:
+  Set by: which node(s) write this field
+  Read by: which node(s) consume this field
 """
 
 from typing import TypedDict
@@ -14,85 +18,104 @@ from typing import TypedDict
 class TradingState(TypedDict, total=False):
     """
     统一的交易系统状态
+
+    All node functions receive this state and return a partial dict
+    that gets merged back. Nodes must NEVER mutate the state dict directly.
     """
-    
-    # ========== 1. 核心运行时状态 (Runtime) ==========
-    run_id: str                 # 当前 Tick 的运行 ID，用于日志追踪和持久化
-    thread_id: str              # 会话 ID (e.g. BTC_USDT_15m)
-    status: str                 # 系统状态: 'looking_for_trade', 'order_pending', 'managing_position', 'cooldown'
-    loop_count: int             # 循环计数
-    last_update: str            # 最后更新时间 (ISO)
-    
-    # ========== 2. 市场数据 (Market Data) ==========
-    symbol: str                 # 标的符号 (e.g. BTC/USDT)
-    timeframe: str              # 时间周期 (e.g. '15m')
-    exchange: str               # 交易所名称
-    
-    # 原始与处理后的 K 线数据
-    bars: list[dict[str, object]]            # 标准 K 线列表 [open, high, low, close, volume]
-    current_bar: dict[str, object] | None    # 当前未收盘/最新收盘 K 线
-    current_bar_index: int                # 当前 K 线在数据集中的索引
-    
-    # 视觉辅助
-    chart_image_path: str       # 回测/分析图表路径
-    focus_chart_image_path: str # 焦点区域图表路径
-    
-    # ========== 3. 分析结果 (Analysis Funnel) ==========
-    
-    # L0: Python Preprocessing (Volatility/Range)
-    is_dead_market: bool                 # 是否为死寂市场（低波动）
-    brooks_notation: str                 # 简化的价格行为标记文本，用于 L1 输入
-    market_context: dict[str, object]       # 市场上下文特征 (ATR, Volatility, Range Position)
-    
-    # L1: Text Model Screening (Setup Detection)
-    l1_analysis: dict[str, object]          # L1 模型的完整输出 (setup_detected, setup_type, reasoning, confidence)
-    l1_market_state: dict[str, object]      # L1 维护的增量市场状态快照 (MarketStateSnapshot)
-    
-    # L2: Vision Model / Comprehensive Analysis
-    brooks_analysis: dict[str, object]      # 详细的 Brooks 价格行为分析结果
-    trading_plan: object                    # L2 生成的结构化 TradingPlan (详见 src/models/market_state.py)
-    
-    # Internal Decision Buffers
-    decisions: list[dict[str, object]]      # 策略层生成的初步决策 (TradingDecision)
-    
-    # ========== 4. 账户与持仓 (Account & Position) ==========
-    account_info: dict[str, object]          # 账户余额、可用保证金等
-    account_balance: float               # 总权益
-    daily_pnl: float                     # 今日盈亏
-    
-    # 持仓管理
-    position: dict[str, object] | None       # 当前活跃持仓详情
-    entry_bar_index: int                 # 入场时的 K 线索引
-    
-    # 挂单管理
-    pending_order_id: str | None         # 正在等待成交的订单 ID
-    order_placed_time: str | None        # 下单时间
-    
-    # ========== 5. 执行与风险控制 (Execution & Risk) ==========
-    execution_results: list[dict[str, object]] # 风险管理后最终确认的执行方案 (ExecutionPlan)
-    execution_metadata: dict[str, object]      # 执行统计 (decisions_received, trades_executed)
-    
-    # 风险状态
-    consecutive_losses: int      # 连续亏损次数
-    max_daily_loss_pct: float    # 允许的最大日内亏损比例
-    is_trading_enabled: bool     # 交易总开关 (风控熔断)
-    
-    # ========== 6. 指令与反馈 (Signals & Logs) ==========
-    next_action: str             # 路由器使用的下一步指令: 'scan', 'manage', 'cooldown', 'halt'
-    
-    # 退出与错误
-    should_exit: bool                    # 是否在当前循环结束后退出
-    exit_reason: str                      # 退出原因
-    error: str                           # 最后一个错误信息
-    errors: list[str]                    # 错误历史记录
-    warnings: list[str]                  # 警告记录
-    messages: list[object]                  # 系统运行日志消息
-    
-    # 盈亏反馈
-    last_trade_pnl: float | None         # 上一笔平仓交易的盈亏
 
+    # ── 1. Runtime ──────────────────────────────────────────────
+    # Core identifiers and lifecycle tracking.
+    run_id: str                 # Set by: supervisor       | Read by: all nodes (DB persistence)
+    thread_id: str              # Set by: main.py          | Read by: supervisor
+    status: str                 # Set by: init, order_monitor, position_sync, execution
+                                # Read by: supervisor_router, all position-management nodes
+                                # Values: 'looking_for_trade', 'order_pending', 'managing_position', 'cooldown'
+    loop_count: int             # Set by: supervisor       | Read by: supervisor (loop guard)
+    last_update: str            # Set by: supervisor       | Read by: frontend
 
-# ========== 向后兼容处理 (Compatibility) ==========
+    # ── 2. Market Data (set by: market_data node) ───────────────
+    # Raw and processed bar data consumed by analysis & strategy nodes.
+    symbol: str                 # Set by: config/main      | Read by: all nodes
+    timeframe: str              # Set by: config/main      | Read by: order_monitor, market_data
+    exchange: str               # Set by: config/main      | Read by: order_monitor, execution, position_sync
 
-# AgentState 是 TradingState 的别名
-AgentState = TradingState
+    bars: list[dict[str, object]]            # Set by: market_data | Read by: brooks_analyzer, strategy, position_guard, risk, followthrough
+    current_bar: dict[str, object] | None    # Set by: market_data | Read by: order_monitor, position_guard, followthrough
+    current_bar_index: int                   # Set by: market_data | Read by: order_monitor, followthrough, second_entry
+    current_price: float                     # Set by: market_data | Read by: position_guard, risk
+
+    market_states: list[dict[str, object]]   # Set by: market_data | Read by: strategy, risk
+    market_data: dict[str, object]           # Set by: market_data | Read by: strategy, frontend
+
+    # Visual artifacts
+    chart_image_path: str       # Set by: market_data      | Read by: brooks_analyzer, followthrough
+    focus_chart_image_path: str # Set by: market_data      | Read by: brooks_analyzer
+
+    # ── 3. Analysis Pipeline ────────────────────────────────────
+    # Multi-tier funnel: L0 (Python) → L1 (text LLM) → L2 (vision LLM) → Strategy
+
+    # L0: Python Preprocessing (set by: market_data node)
+    is_dead_market: bool                  # Read by: supervisor_router (gate to skip L1+)
+    brooks_notation: str                  # Read by: l1_screener
+    market_context: dict[str, object]     # Read by: l1_screener
+
+    # L1: Text Model Screening (set by: l1_screener)
+    l1_analysis: dict[str, object]        # Read by: brooks_analyzer (L2 confirmation)
+    l1_market_state: dict[str, object]    # Read by: brooks_analyzer, l1_screener (prev state)
+    l1_setup_detected: bool               # Read by: supervisor_router
+    l1_setup_type: str | None             # Read by: brooks_analyzer
+    l1_reasoning: str                     # Read by: brooks_analyzer
+    l1_confidence: str                    # Read by: supervisor_router
+
+    # L2: Vision Model (set by: brooks_analyzer)
+    brooks_analysis: dict[str, object]    # Read by: strategy_enhanced, risk
+    validation_result: dict[str, object]  # Read by: strategy_enhanced
+    trading_plan: object                  # Read by: execution, position_guard (TradingPlan model)
+
+    # Strategy output (set by: strategy_enhanced)
+    decisions: list[dict[str, object]]    # Read by: risk, execution
+
+    # ── 4. Account & Position ───────────────────────────────────
+    # Financial state and active position tracking.
+    account_info: dict[str, object]       # Set by: config/main    | Read by: strategy, risk
+    account_balance: float                # Set by: config/main    | Read by: risk
+    daily_pnl: float                      # Set by: config/main    | Read by: risk
+
+    # Position management
+    position: dict[str, object] | None    # Set by: order_monitor, position_sync, execution
+                                          # Read by: position_guard, followthrough, order_monitor
+    entry_bar_index: int                  # Set by: order_monitor  | Read by: followthrough
+
+    # Pending order tracking
+    pending_order_id: str | None          # Set by: execution      | Read by: order_monitor
+    order_placed_time: str | None         # Set by: execution      | Read by: order_monitor
+
+    # ── 5. Execution & Risk ─────────────────────────────────────
+    # Outputs from risk assessment and trade execution.
+    execution_results: list[dict[str, object]]  # Set by: risk     | Read by: execution
+    execution_metadata: dict[str, object]       # Set by: execution| Read by: order_monitor
+
+    # Risk controls
+    consecutive_losses: int               # Set by: supervisor     | Read by: risk
+    max_daily_loss_pct: float             # Set by: config         | Read by: risk
+    is_trading_enabled: bool              # Set by: safety_check   | Read by: supervisor_router
+
+    # ── 6. Signals & Feedback ───────────────────────────────────
+    # Routing directives, exit signals, and error tracking.
+    next_action: str             # Set by: supervisor_router | Read by: supervisor
+                                 # Values: 'scan', 'manage', 'cooldown', 'halt'
+
+    # Exit signals
+    should_exit: bool            # Set by: followthrough     | Read by: position_guard
+    exit_reason: str             # Set by: followthrough     | Read by: supervisor
+    stop_loss: float             # Set by: position_guard, followthrough | Read by: position_guard
+    stop_loss_order_id: str      # Set by: position_guard    | Read by: position_guard
+
+    # Error tracking
+    error: str                   # Set by: any node          | Read by: supervisor
+    errors: list[str]            # Set by: any node (append) | Read by: supervisor, frontend
+    warnings: list[str]          # Set by: any node (append) | Read by: frontend
+    messages: list[object]       # Set by: any node          | Read by: frontend
+
+    # PnL feedback
+    last_trade_pnl: float | None # Set by: supervisor        | Read by: risk

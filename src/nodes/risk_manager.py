@@ -1,11 +1,23 @@
 """
 基础风险管理节点 - Basic Risk Manager
 
-实现 Brooks 的动态止损策略：
+DEPRECATED: This module is superseded by position_guard.py which consolidates
+all stop management logic (breakeven, trailing stops, measured moves).
+The calculate_measured_move_target function has been migrated to position_guard.py.
+This file is kept temporarily for reference but is no longer used in the workflow.
+
+Original functionality:
 1. Breakeven (保本)
-2. Bar-by-Bar Trailing Stop  
+2. Bar-by-Bar Trailing Stop
 3. Measured Move Stop
 """
+
+import warnings
+warnings.warn(
+    "risk_manager is deprecated. Use position_guard instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 from typing import TypedDict
 from ..trading.exchange_client import get_client, normalize_symbol

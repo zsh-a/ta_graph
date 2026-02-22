@@ -11,8 +11,9 @@ Implements Brooks' trailing stop modes based on the TradingPlan:
 from typing import Any
 from dataclasses import dataclass
 from enum import Enum
+from langfuse import observe
 
-from ..trading.exchange_client import get_client
+from ..trading.exchange_client import get_client, normalize_symbol
 from ..logger import get_logger
 from ..notification.alerts import notify_trade_event
 from ..state import TradingState
@@ -251,6 +252,7 @@ def should_move_to_breakeven(state: TradingState) -> bool:
     return profit >= risk
 
 
+@observe()
 def guard_position(state: TradingState) -> dict[str, Any]:
     """
     Position Guard Node - Main entry point.
@@ -333,45 +335,59 @@ def guard_position(state: TradingState) -> dict[str, Any]:
 def _update_stop_on_exchange(state: TradingState, new_stop: float) -> bool:
     """
     Update stop loss order on exchange.
-    
+
     Returns:
         True if successful, False otherwise
     """
     import os
     trading_mode = os.getenv("TRADING_MODE", "dry-run").lower()
-    
+
     if trading_mode != "live":
         logger.debug(f"Dry-run mode: would update stop to {new_stop}")
         return True
-    
+
     try:
         symbol = state.get("symbol")
         if not symbol:
             return False
-        
+
         exchange_name = os.getenv("EXCHANGE_NAME", "bitget")
         client = get_client(exchange_name)
-        
-        # Cancel existing stop order and create new one
-        # Implementation depends on exchange API
+        trading_symbol = normalize_symbol(symbol, exchange_name)
+
         position = state.get("position", {})
         side = position.get("side", "long")
-        
-        if side.lower() in ("long", "buy"):
-            # For long position, stop sell order
-            pass
-        else:
-            # For short position, stop buy order
-            pass
-        
-        # Note: Actual implementation would need to:
-        # 1. Find and cancel existing stop order
-        # 2. Create new stop order at new_stop price
-        # This varies by exchange
-        
-        logger.info(f"✓ Updated stop loss to {new_stop} on exchange")
+        size = position.get("size", 0)
+
+        if not size:
+            logger.warning("No position size found, cannot update stop")
+            return False
+
+        # Cancel existing stop order if tracked
+        existing_stop_id = state.get("stop_loss_order_id")
+        if existing_stop_id:
+            try:
+                client.cancel_order(existing_stop_id, trading_symbol)
+                logger.debug(f"Canceled old stop order: {existing_stop_id}")
+            except Exception as e:
+                logger.warning(f"Failed to cancel old stop order: {e}")
+
+        # Place new stop-market order
+        close_side = "sell" if side.lower() in ("long", "buy") else "buy"
+
+        stop_order = client.place_order(
+            symbol=trading_symbol,
+            side=close_side,
+            order_type="stop_market",
+            amount=size,
+            price=None,
+            reduce_only=True,
+            params={"stopPrice": new_stop}
+        )
+
+        logger.info(f"✅ Stop loss updated to {new_stop} on exchange (Order: {stop_order.id})")
         return True
-        
+
     except Exception as e:
         logger.error(f"Failed to update stop on exchange: {e}")
         return False
@@ -404,5 +420,38 @@ def check_volatility_interrupt(state: TradingState, atr_threshold_multiplier: fl
     if bar_range > atr * atr_threshold_multiplier:
         logger.warning(f"⚠️ VOLATILITY INTERRUPT: Bar range {bar_range:.2f} > {atr_threshold_multiplier}x ATR ({atr:.2f})")
         return True
-    
+
     return False
+
+
+def calculate_measured_move_target(bars: list[dict], side: str) -> float | None:
+    """
+    Calculate Measured Move target price.
+
+    Brooks principle: Leg 1 = Leg 2.
+    Finds the most recent swing high/low and projects the same distance.
+
+    Migrated from risk_manager.py.
+
+    Args:
+        bars: OHLC bar data
+        side: Position direction ("long" or "short")
+
+    Returns:
+        Target price, or None if insufficient data
+    """
+    if len(bars) < 20:
+        return None
+
+    recent_bars = bars[-20:]
+
+    if side == "long":
+        swing_low = min(bar["low"] for bar in recent_bars)
+        swing_high = max(bar["high"] for bar in recent_bars)
+        leg_height = swing_high - swing_low
+        return swing_high + leg_height
+    else:  # short
+        swing_high = max(bar["high"] for bar in recent_bars)
+        swing_low = min(bar["low"] for bar in recent_bars)
+        leg_height = swing_high - swing_low
+        return swing_low - leg_height

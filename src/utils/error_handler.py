@@ -11,7 +11,7 @@ import functools
 import time
 from typing import Callable, cast
 from collections.abc import Mapping
-from ..state import AgentState
+from ..state import TradingState
 from ..logger import get_logger
 
 logger = get_logger(__name__)
@@ -96,7 +96,7 @@ def with_error_handling(
     
     Usage:
         @with_error_handling(max_retries=2, fallback_fn=my_fallback)
-        def my_node(state: AgentState) -> dict:
+        def my_node(state: TradingState) -> dict:
             # Node implementation
             return {"result": value}
     
@@ -105,7 +105,7 @@ def with_error_handling(
     """
     def decorator(func: Callable[..., dict[str, object]]) -> Callable[..., dict[str, object]]:
         @functools.wraps(func)
-        def wrapper(state: AgentState, *args: object, **kwargs: object) -> dict[str, object]:
+        def wrapper(state: TradingState, *args: object, **kwargs: object) -> dict[str, object]:
             last_error: Exception | None = None
             func_name = func.__name__
             

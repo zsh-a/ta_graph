@@ -12,6 +12,7 @@ the weak hands have been stopped out."
 from enum import Enum
 from typing import Any
 from dataclasses import dataclass, field
+from langfuse import observe
 
 from ..state import TradingState
 from ..logger import get_logger
@@ -258,6 +259,7 @@ def calculate_second_entry_params(
     return None
 
 
+@observe()
 def process_second_entry(state: TradingState) -> dict[str, Any]:
     """
     Main node function for second entry logic.

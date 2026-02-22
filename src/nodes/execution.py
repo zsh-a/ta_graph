@@ -9,7 +9,7 @@ import os
 import ccxt
 from langfuse import observe
 
-from ..state import AgentState
+from ..state import TradingState
 from ..logger import get_logger
 from ..database import get_session, ModelType, OperationType, SymbolType
 from ..database.trading_history import create_trading_record
@@ -17,9 +17,20 @@ from ..models.market_state import TradingPlan
 
 from ..trading.exchange_client import get_client, ExchangeClient
 from ..utils.event_bus import get_event_bus
+from ..utils.error_handler import with_error_handling
 
 logger = get_logger(__name__)
 bus = get_event_bus()
+
+
+def _execution_fallback(state: TradingState) -> dict:
+    """Fallback if trade execution fails after retries."""
+    logger.warning("⚠️ Trade execution failed - returning safe state")
+    return {
+        "execution_results": [],
+        "execution_metadata": {"decisions_received": 0, "plans_received": 0, "trades_executed": 0},
+        "warnings": list(state.get("warnings") or []) + ["Trade execution failed - no orders placed"],
+    }
 
 
 
@@ -220,7 +231,8 @@ def save_trade_to_database(
         logger.error(f"Failed to save trade to database: {e}")
 
 @observe()
-def execute_trade(state: AgentState) -> dict:
+@with_error_handling(max_retries=1, fallback_fn=_execution_fallback)
+def execute_trade(state: TradingState) -> dict:
     """Execute Trade"""
     bus.emit_sync("node_start", {"node": "execution"})
     logger.info("🚀 Executing Trades...")

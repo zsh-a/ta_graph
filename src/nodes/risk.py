@@ -1,23 +1,18 @@
 from typing import Any
 import os
 from langfuse import observe
-from ..state import AgentState
+from ..state import TradingState
 from ..logger import get_logger
 from ..utils.event_bus import get_event_bus
 from ..utils.price_calculator import calculate_entry_price, calculate_stop_loss_price, calculate_take_profit_price
 from ..utils.error_handler import with_error_handling, DataError
+from ..utils.symbol import normalize_symbol
 
 logger = get_logger(__name__)
 bus = get_event_bus()
 
-# ========== Helpers ==========
 
-def normalize_symbol(symbol: str) -> str:
-    """Normalize symbol to base currency (BTC, ETH, etc.)"""
-    return symbol.split('/')[0].split(':')[0]
-
-
-def risk_fallback(state: AgentState) -> dict[str, Any]:
+def risk_fallback(state: TradingState) -> dict[str, Any]:
     """
     Fallback if risk assessment fails.
     Returns Hold decisions for all proposed trades.
@@ -37,7 +32,7 @@ def risk_fallback(state: AgentState) -> dict[str, Any]:
     return {"execution_results": hold_plans}
 
 
-class RiskConfig:
+class RiskParameters:
     trading_mode: str
     max_position_size_usdt: float
     max_leverage: float
@@ -56,7 +51,7 @@ class RiskConfig:
 
 @observe()
 @with_error_handling(max_retries=1, fallback_fn=risk_fallback)
-def assess_risk(state: AgentState) -> dict[str, Any]:
+def assess_risk(state: TradingState) -> dict[str, Any]:
     """Assess Risk"""
     bus.emit_sync("node_start", {"node": "risk"})
     logger.info("Assessing Risk...")
@@ -95,7 +90,7 @@ def assess_risk(state: AgentState) -> dict[str, Any]:
     # Mock daily pnl (should come from account info)
     daily_pnl_percent = state.get("account_info", {}).get("daily_pnl_percent", 0.0)
 
-    config = RiskConfig()
+    config = RiskParameters()
     execution_plans = []
 
     for decision in decisions:

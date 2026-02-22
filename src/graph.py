@@ -14,7 +14,7 @@ from langgraph.graph.state import CompiledStateGraph as CompiledGraph
 from langgraph.checkpoint.sqlite import SqliteSaver
 import os
 
-from .state import AgentState
+from .state import TradingState
 from .nodes.market_data import fetch_market_data
 from .nodes.l1_screener import l1_screen
 from .nodes.brooks_analyzer import brooks_analyzer
@@ -50,7 +50,7 @@ def get_analysis_subgraph() -> CompiledGraph:
     if _analysis_subgraph is None:
         logger.info("Creating Analysis Subgraph with tiered routing...")
         
-        workflow = StateGraph(AgentState)
+        workflow = StateGraph(TradingState)
         
         # Add nodes
         workflow.add_node("market_data", fetch_market_data)
@@ -62,12 +62,23 @@ def get_analysis_subgraph() -> CompiledGraph:
         
         # ========== Routing Functions ==========
         
-        def l0_gate(state: AgentState) -> str:
+        def l0_gate(state: TradingState) -> str:
             """
-            L0 Gate: Dead market filter
-            
-            If market is dead (low volatility), skip AI calls entirely.
+            L0 Gate: Dead market filter + empty data guard
+
+            If market data fetch failed or market is dead, skip AI calls entirely.
             """
+            # Guard: if market_data fallback returned empty data, stop the pipeline
+            market_states = state.get("market_states", [])
+            if not market_states:
+                logger.warning("L0 Gate: No market data available (fetch failed), skipping pipeline")
+                emit_node_event("l0_gate", "market_data", {
+                    "is_dead_market": False,
+                    "no_data": True,
+                    "result": "skip_no_data"
+                }, message="Market data unavailable, skipping analysis")
+                return "dead_market"
+
             is_dead_market = state.get("is_dead_market", False)
             if is_dead_market:
                 logger.info("🐟 L0 Gate: Dead market detected, skipping AI analysis")
@@ -82,7 +93,7 @@ def get_analysis_subgraph() -> CompiledGraph:
             })
             return "continue"
         
-        def l1_to_l2_router(state: AgentState) -> str:
+        def l1_to_l2_router(state: TradingState) -> str:
             """
             L1 → L2 Router: Only invoke expensive VL model if L1 detects setup
             
@@ -150,7 +161,7 @@ def create_graph(enable_checkpointing: bool = True, enable_hitl: bool = False):
     """
     logger.info("Creating enhanced trading graph...")
     
-    workflow = StateGraph(AgentState)
+    workflow = StateGraph(TradingState)
     
     # ========== Add Nodes ==========
     

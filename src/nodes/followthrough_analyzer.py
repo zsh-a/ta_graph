@@ -15,7 +15,7 @@ from langfuse import observe
 from ..logger import get_logger
 from ..notification.alerts import notify_trade_event
 from ..utils.model_manager import get_llm
-from ..state import AgentState
+from ..state import TradingState
 from ..database.persistence_manager import get_persistence_manager
 
 logger = get_logger(__name__)
@@ -82,7 +82,7 @@ Return ONLY valid JSON matching the FollowThroughAnalysis schema.
 
 
 @observe()
-def analyze_followthrough(state: dict) -> dict:
+def analyze_followthrough(state: TradingState) -> dict:
     """
     Analyze follow-through and decide on position strategy
     
@@ -132,7 +132,7 @@ def analyze_followthrough(state: dict) -> dict:
             analysis = analyze_followthrough_simple(state)
     else:
         logger.warning("No chart image available. Using simplified OHLC analysis.")
-    analysis = analyze_followthrough_simple(state)
+        analysis = analyze_followthrough_simple(state)
 
     # Persistence
     run_id = state.get("run_id")
@@ -148,6 +148,12 @@ def analyze_followthrough(state: dict) -> dict:
         except Exception as e:
             logger.warning(f"⚠️  Failed to record follow-through analysis: {e}")
     
+    # Build state updates dict (no direct mutation)
+    updates: dict = {
+        "last_followthrough_analysis": analysis,
+        "followthrough_checked": True,
+    }
+
     # Take action based on analysis results
     if analysis["recommendation"] == "exit_market":
         if analysis["confidence"] > 0.7:
@@ -155,35 +161,23 @@ def analyze_followthrough(state: dict) -> dict:
                 f"⚠️ Disappointing follow-through detected. "
                 f"Confidence: {analysis['confidence']:.2f}. Exiting at market."
             )
-            
-            # Record exit reason
-            state["exit_reason"] = "disappointing_followthrough"
-            state["followthrough_analysis"] = analysis
-            
-            # Actual close will be handled in risk_manager
-            # Here we just set the flag
-            state["should_exit"] = True
-    
+            updates["exit_reason"] = "disappointing_followthrough"
+            updates["followthrough_analysis"] = analysis
+            updates["should_exit"] = True
+
     elif analysis["recommendation"] == "tighten_stop":
         logger.info("🔒 Weak follow-through. Tightening stop loss.")
-        
-        # Calculate tighter stop
         new_stop = calculate_tighter_stop(state)
         if new_stop:
-            state["stop_loss"] = new_stop
-            state["stop_tightened"] = True
-    
+            updates["stop_loss"] = new_stop
+            updates["stop_tightened"] = True
+
     elif analysis["recommendation"] == "add_position":
         if analysis["confidence"] > 0.8:
             logger.info("💪 Strong follow-through! Consider adding position.")
-            # Position adding logic can be implemented here
-            state["add_signal"] = True
-    
-    # Save analysis results
-    state["last_followthrough_analysis"] = analysis
-    state["followthrough_checked"] = True
-    
-    return state
+            updates["add_signal"] = True
+
+    return updates
 
 
 def analyze_followthrough_simple(state: dict) -> dict:

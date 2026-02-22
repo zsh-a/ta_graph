@@ -4,12 +4,13 @@ import os
 import datetime
 from typing import List
 from langfuse import observe
-from ..state import AgentState
+from ..state import TradingState
 from ..utils.event_emitter import emit_node_event
 from ..logger import get_logger
 from ..utils.timeframe_config import get_data_limit
 from ..utils.brooks_chart import save_brooks_chart, get_swing_points  # Use Brooks chart renderer
 from ..utils.l0_preprocessor import L0Preprocessor, encode_bars_to_text, is_dead_market
+from ..utils.error_handler import with_error_handling
 
 logger = get_logger(__name__)
 
@@ -112,8 +113,19 @@ def generate_bar_data_table(df: pd.DataFrame, count: int = 30, swings: list[dict
 
 # --- Node Logic ---
 
+def _market_data_fallback(state: TradingState) -> dict:
+    """Fallback if market data fetch fails."""
+    logger.warning("⚠️ Market data fetch failed - returning empty state")
+    return {
+        "market_states": [],
+        "bars": [],
+        "errors": list(state.get("errors") or []) + ["Market data fetch failed"],
+    }
+
+
 @observe()
-def fetch_market_data(state: AgentState) -> dict:
+@with_error_handling(max_retries=2, retry_delay=2.0, fallback_fn=_market_data_fallback)
+def fetch_market_data(state: TradingState) -> dict:
     """
     Fetch market data, calculate indicators, and generate chart.
     Populates 'market_states' list for the strategy node.

@@ -8,13 +8,12 @@ from langfuse import observe
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from ..state import AgentState
+from ..state import TradingState
 from ..prompts import get_trading_system_prompt, get_user_prompt_parts, get_dynamic_trading_prompt
 from ..logger import get_logger
 from ..database import ModelType
 from ..utils.model_manager import get_llm
 from ..utils.trade_filters import get_trade_filter
-# from ..nodes.brooks_analyzer import create_hold_decision, should_force_hold
 from ..utils.timeout_decorator import with_timeout
 from ..utils.event_bus import get_event_bus
 import asyncio
@@ -41,7 +40,7 @@ from ..models.decisions import (
 
 # ==================== Fallback Function ====================
 
-def strategy_fallback(state: AgentState) -> dict:
+def strategy_fallback(state: TradingState) -> dict:
     """
     Fallback if strategy generation times out.
     Returns safe Hold decision.
@@ -61,7 +60,7 @@ def strategy_fallback(state: AgentState) -> dict:
 
 @observe()
 @with_timeout(timeout_seconds=90, fallback_fn=strategy_fallback, operation_name="Strategy Generation")
-def generate_strategy(state: AgentState) -> dict:
+def generate_strategy(state: TradingState) -> dict:
     """
     Enhanced strategy generation with Brooks analysis and trade filters.
     

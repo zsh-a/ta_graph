@@ -7,6 +7,7 @@
 
 from datetime import datetime, timezone
 from typing import cast
+from langfuse import observe
 from ..trading.exchange_client import get_client, normalize_symbol
 from ..logger import get_logger
 from ..utils.event_bus import get_event_bus
@@ -17,6 +18,7 @@ logger = get_logger(__name__)
 bus = get_event_bus()
 
 
+@observe()
 def monitor_pending_order(state: TradingState) -> TradingState:
     """
     监控挂单状态
@@ -184,6 +186,7 @@ def monitor_pending_order(state: TradingState) -> TradingState:
     return state
 
 
+@observe()
 def confirm_order_fill(state: TradingState) -> TradingState:
     """
     确认订单成交并更新状态
@@ -245,7 +248,7 @@ def confirm_order_fill(state: TradingState) -> TradingState:
                 "status": "CANCELED",
                 "order_id": order_id,
                 "symbol": symbol,
-                "reason": "Order canceled externaly"
+                "reason": "Order canceled externally"
             })
             
             return {

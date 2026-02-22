@@ -128,7 +128,7 @@ for trade in trades:
 # src/nodes/strategy.py
 from ..database.trading_history import get_recent_trades_raw
 
-def generate_strategy(state: AgentState) -> dict:
+def generate_strategy(state: TradingState) -> dict:
     # 获取历史交易用于RAG
     recent_trades = get_recent_trades_raw(limit=10)
     
@@ -142,7 +142,7 @@ def generate_strategy(state: AgentState) -> dict:
 # src/nodes/risk.py
 from ..database.trading_history import get_account_performance
 
-def assess_risk(state: AgentState) -> dict:
+def assess_risk(state: TradingState) -> dict:
     # 获取账户信息
     performance = get_account_performance()
     available_cash = performance.availableCash
@@ -158,7 +158,7 @@ def assess_risk(state: AgentState) -> dict:
 from ..database.trading_history import create_trading_record
 from ..database.account_manager import update_model_trade_stats
 
-def execute_trade(state: AgentState) -> dict:
+def execute_trade(state: TradingState) -> dict:
     # 执行交易后记录
     trade = create_trading_record(
         symbol=SymbolType.BTC,

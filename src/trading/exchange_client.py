@@ -194,6 +194,7 @@ class CCXTExchangeClient(ExchangeClient):
             'enableRateLimit': True,
             'options': {
                 'defaultType': 'swap',  # Default to futures/swap
+                # 'adjustForTimeDifference': True,  # Fix for timestamp expired errors
             },
         }
         
