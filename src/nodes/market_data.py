@@ -253,11 +253,13 @@ def fetch_market_data(state: TradingState) -> dict:
     # NEW: Emit detailed market data complete event for frontend display
     emit_node_event("market_data_complete", "market_data", {
         "symbol": symbol,
+        "exchange": state.get("exchange", "bitget"),
         "timeframe": timeframe,
         "bars": len(ohlcv),
         "current_price": float(current_price),
         "price_change_24h": price_change_24h,
-        "volume_24h": volume_24h
+        "volume_24h": volume_24h,
+        "ohlcv": ohlcv[-1200:]
     })
 
     # Persistence

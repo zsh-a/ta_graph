@@ -1,6 +1,7 @@
 import React from 'react';
 import { useStore } from '../store';
 import { Target, Shield, ArrowUpRight, ArrowDownRight, Activity } from 'lucide-react';
+import { formatTradingPair } from '../lib/market';
 
 export const PositionDisplay: React.FC = () => {
     const trading = useStore((state) => state.trading);
@@ -28,7 +29,7 @@ export const PositionDisplay: React.FC = () => {
                         {isLong ? <ArrowUpRight size={20} /> : <ArrowDownRight size={20} />}
                     </div>
                     <div>
-                        <h3 className="font-bold tracking-tight">{position.symbol}</h3>
+                        <h3 className="font-bold tracking-tight">{formatTradingPair(position.symbol)}</h3>
                         <div className="flex items-center gap-2 mt-0.5">
                             <span className={`text-[10px] uppercase font-heavy px-1.5 py-0.5 rounded ${isLong ? 'bg-primary/10 text-primary' : 'bg-destructive/10 text-destructive'}`}>
                                 {position.side?.toUpperCase()}

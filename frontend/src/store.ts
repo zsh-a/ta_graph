@@ -1,28 +1,7 @@
 import { create } from 'zustand';
-import { buildApiUrl } from './lib/api';
 import { processDashboardEvent } from './store/eventProcessor';
-import { createLogId, MAX_LOGS, MAX_PRICES } from './store/types';
-import type { DashboardEvent, PricePoint, TradeLog } from './store/types';
-
-interface GraphNode {
-    id: string;
-    label: string;
-    subgraph?: string;
-}
-
-interface GraphEdge {
-    id: string;
-    source: string;
-    target: string;
-    conditional: boolean;
-    label?: string;
-}
-
-interface GraphData {
-    nodes: GraphNode[];
-    edges: GraphEdge[];
-    subgraphs: string[];
-}
+import { MAX_LOGS, MAX_PRICES } from './store/types';
+import type { CandlePoint, DashboardEvent, TradeLog } from './store/types';
 
 interface TradingState {
     total_trades: number;
@@ -41,12 +20,6 @@ interface SafetyState {
     last_error: string | null;
 }
 
-interface HistoryFilters {
-    start_date?: string;
-    end_date?: string;
-    symbol?: string;
-}
-
 interface DashboardState {
     status: string;
     system: any;
@@ -54,44 +27,28 @@ interface DashboardState {
     performance: any;
     safety: SafetyState;
     logs: TradeLog[];
-    activeNode: string | null;
-    prices: PricePoint[];
-    currentView: string;
-
-    historyRuns: any[];
-    currentRunDetails: any | null;
-    historyLoading: boolean;
-
-    graphData: GraphData | null;
-    graphLoading: boolean;
+    candles: CandlePoint[];
+    market: {
+        symbol: string;
+        exchange: string;
+        timeframe: string;
+        current_price: number;
+        price_change_24h: number;
+    };
 
     updateFromInitialState: (data: any) => void;
-    addLog: (log: Omit<TradeLog, 'id'>) => void;
     setSystemStatus: (status: string) => void;
-    updatePosition: (position: any) => void;
-    setActiveNode: (node: string | null) => void;
-    addPrice: (price: PricePoint) => void;
-    setView: (view: string) => void;
     processEvent: (message: DashboardEvent, isHistory?: boolean) => Partial<DashboardState>;
-    fetchHistoryRuns: (filters?: HistoryFilters) => Promise<void>;
-    fetchRunDetails: (runId: string) => Promise<void>;
-    fetchGraphStructure: () => Promise<void>;
 }
 
-const dedupeAndSortPrices = (rawPrices: PricePoint[]) => {
-    const sorted = [...rawPrices].sort((a, b) => a.time - b.time);
-    const seenTimes = new Set<number>();
-    const finalPrices: PricePoint[] = [];
-
-    for (const point of sorted) {
-        const roundedTime = Math.round(point.time * 1000) / 1000;
-        if (!seenTimes.has(roundedTime)) {
-            finalPrices.push({ ...point, time: roundedTime });
-            seenTimes.add(roundedTime);
-        }
+const dedupeAndSortCandles = (rawCandles: CandlePoint[]) => {
+    const sorted = [...rawCandles].sort((a, b) => a.time - b.time);
+    const map = new Map<number, CandlePoint>();
+    for (const candle of sorted) {
+        const roundedTime = Math.round(candle.time);
+        map.set(roundedTime, { ...candle, time: roundedTime });
     }
-
-    return finalPrices.slice(-MAX_PRICES);
+    return [...map.values()].slice(-MAX_PRICES);
 };
 
 export const useStore = create<DashboardState>((set, get) => ({
@@ -110,22 +67,20 @@ export const useStore = create<DashboardState>((set, get) => ({
     performance: { recent_pnl: [], execution_times: [] },
     safety: { equity_protector: {}, error_count: 0, last_error: null },
     logs: [],
-    activeNode: null,
-    prices: [],
-    currentView: 'cockpit',
-
-    historyRuns: [],
-    currentRunDetails: null,
-    historyLoading: false,
-
-    graphData: null,
-    graphLoading: false,
+    candles: [],
+    market: {
+        symbol: 'BTCUSDT',
+        exchange: 'bitget',
+        timeframe: '1h',
+        current_price: 0,
+        price_change_24h: 0
+    },
 
     updateFromInitialState: (data) => set((state) => {
         let accumulatedLogs: TradeLog[] = [];
-        let accumulatedPrices: PricePoint[] = [];
+        let accumulatedCandles: CandlePoint[] = [];
         let replayStatus = data.system?.status || state.status;
-        let replayActiveNode = state.activeNode;
+        let replayMarket: DashboardState['market'] = state.market;
 
         if (Array.isArray(data.history)) {
             for (const event of data.history) {
@@ -133,24 +88,26 @@ export const useStore = create<DashboardState>((set, get) => ({
                     message: event,
                     isHistory: true,
                     currentTrading: state.trading,
-                    currentPrices: accumulatedPrices,
                     currentLogs: accumulatedLogs
                 });
 
                 if (updates.logs) {
                     accumulatedLogs = [...updates.logs, ...accumulatedLogs];
                 }
-
-                if (updates.prices) {
-                    accumulatedPrices = [...accumulatedPrices, ...updates.prices];
+                if (updates.candles) {
+                    accumulatedCandles = [...accumulatedCandles, ...updates.candles];
                 }
-
-                if (updates.activeNode !== undefined) {
-                    replayActiveNode = updates.activeNode;
-                }
-
                 if (updates.status !== undefined) {
                     replayStatus = updates.status;
+                }
+                if (updates.market !== undefined) {
+                    replayMarket = {
+                        symbol: updates.market.symbol ?? replayMarket.symbol,
+                        exchange: updates.market.exchange ?? replayMarket.exchange,
+                        timeframe: updates.market.timeframe ?? replayMarket.timeframe,
+                        current_price: updates.market.current_price ?? replayMarket.current_price,
+                        price_change_24h: updates.market.price_change_24h ?? replayMarket.price_change_24h,
+                    };
                 }
             }
         }
@@ -163,8 +120,8 @@ export const useStore = create<DashboardState>((set, get) => ({
             performance: data.performance || state.performance,
             safety: data.safety || state.safety,
             logs: accumulatedLogs.slice(0, MAX_LOGS),
-            prices: dedupeAndSortPrices(accumulatedPrices),
-            activeNode: replayActiveNode
+            candles: dedupeAndSortCandles(accumulatedCandles),
+            market: replayMarket
         };
     }),
 
@@ -174,80 +131,27 @@ export const useStore = create<DashboardState>((set, get) => ({
             message,
             isHistory,
             currentTrading: state.trading,
-            currentPrices: state.prices,
             currentLogs: state.logs
         });
 
+        const normalizedUpdates: Partial<DashboardState> = {
+            ...updates,
+            market: updates.market
+                ? {
+                    symbol: updates.market.symbol ?? state.market.symbol,
+                    exchange: updates.market.exchange ?? state.market.exchange,
+                    timeframe: updates.market.timeframe ?? state.market.timeframe,
+                    current_price: updates.market.current_price ?? state.market.current_price,
+                    price_change_24h: updates.market.price_change_24h ?? state.market.price_change_24h,
+                }
+                : undefined,
+        };
+
         if (!isHistory) {
-            set((prev) => ({ ...prev, ...updates }));
+            set((prev) => ({ ...prev, ...normalizedUpdates }));
         }
 
-        return updates;
+        return normalizedUpdates;
     },
-
-    addLog: (log) => set((state) => ({
-        logs: [{ ...log, id: createLogId() }, ...state.logs].slice(0, MAX_LOGS)
-    })),
-
     setSystemStatus: (status) => set({ status }),
-
-    updatePosition: (position) => set((state) => ({
-        trading: { ...state.trading, current_position: position }
-    })),
-
-    setActiveNode: (node) => set({ activeNode: node }),
-
-    addPrice: (price) => set((state) => {
-        const next = [...state.prices, price].slice(-MAX_PRICES);
-        return { prices: next };
-    }),
-
-    setView: (view) => set({ currentView: view }),
-
-    fetchHistoryRuns: async (filters = {}) => {
-        set({ historyLoading: true });
-        try {
-            const params = new URLSearchParams();
-            if (filters.start_date) params.append('start_date', filters.start_date);
-            if (filters.end_date) params.append('end_date', filters.end_date);
-            if (filters.symbol) params.append('symbol', filters.symbol);
-
-            const response = await fetch(buildApiUrl('/history/runs', params));
-            const data = await response.json();
-            set({ historyRuns: data.runs || [], historyLoading: false });
-        } catch (error) {
-            console.error('Failed to fetch history runs:', error);
-            set({ historyRuns: [], historyLoading: false });
-        }
-    },
-
-    fetchRunDetails: async (runId: string) => {
-        set({ historyLoading: true });
-        try {
-            const response = await fetch(buildApiUrl(`/history/runs/${runId}`));
-            const data = await response.json();
-            set({ currentRunDetails: data, historyLoading: false });
-        } catch (error) {
-            console.error('Failed to fetch run details:', error);
-            set({ historyLoading: false });
-        }
-    },
-
-    fetchGraphStructure: async () => {
-        set({ graphLoading: true });
-        try {
-            const response = await fetch(buildApiUrl('/graph'));
-            const data = await response.json();
-
-            if (data.error) {
-                console.error('Failed to fetch graph structure:', data.error);
-                set({ graphData: null, graphLoading: false });
-            } else {
-                set({ graphData: data, graphLoading: false });
-            }
-        } catch (error) {
-            console.error('Failed to fetch graph structure:', error);
-            set({ graphData: null, graphLoading: false });
-        }
-    },
 }));

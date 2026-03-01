@@ -1,78 +1,33 @@
 import React from 'react';
-import { LayoutDashboard, Zap, History as HistoryIcon } from 'lucide-react';
+import { Zap } from 'lucide-react';
 import { useStore } from './store';
-
-interface SidebarItemProps {
-    icon: React.ElementType;
-    label: string;
-    active?: boolean;
-    onClick?: () => void;
-}
-
-const SidebarItem = ({ icon: Icon, label, active, onClick }: SidebarItemProps) => (
-    <div
-        onClick={onClick}
-        className={`flex items-center gap-3 px-4 py-3 rounded-lg cursor-pointer transition-all duration-200 ${active ? 'bg-primary/20 text-primary border-l-4 border-primary' : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-            }`}>
-        <Icon size={20} />
-        <span className="font-medium text-sm">{label}</span>
-    </div>
-);
 
 export const AppLayout = ({ children }: { children: React.ReactNode }) => {
     const status = useStore((state) => state.status);
-    const currentView = useStore((state) => state.currentView);
-    const setView = useStore((state) => state.setView);
 
     return (
-        <div className="flex h-screen bg-background text-foreground overflow-hidden">
-            {/* Sidebar */}
-            <aside className="w-64 border-r border-border flex flex-col glass-card m-2 rounded-xl">
-                <div className="p-6 flex items-center gap-3 border-b border-border">
-                    <div className="p-2 bg-primary rounded-lg">
-                        <Zap className="text-primary-foreground" size={24} />
-                    </div>
-                    <div>
-                        <h1 className="font-bold text-lg tracking-tight">ta_graph</h1>
-                        <div className="flex items-center gap-2">
-                            <div className={`w-2 h-2 rounded-full ${status === 'online' ? 'bg-primary' : 'bg-destructive'} animate-pulse`} />
-                            <span className="text-[10px] uppercase tracking-widest text-muted-foreground font-bold">{status}</span>
+        <div className="h-screen bg-background text-foreground overflow-hidden p-2 md:p-3">
+            <div className="h-full flex flex-col gap-2 md:gap-3">
+                <header className="glass-card px-4 py-3 flex items-center justify-between shrink-0">
+                    <div className="flex items-center gap-3">
+                        <div className="p-2 bg-primary rounded-lg">
+                            <Zap className="text-primary-foreground" size={18} />
+                        </div>
+                        <div>
+                            <h1 className="font-bold text-lg tracking-tight">ta_graph</h1>
+                            <p className="text-[11px] text-muted-foreground uppercase tracking-wider">Execution Cockpit</p>
                         </div>
                     </div>
-                </div>
-
-                <nav className="flex-1 p-3 space-y-1">
-                    <SidebarItem
-                        icon={LayoutDashboard}
-                        label="Cockpit"
-                        active={currentView === 'cockpit'}
-                        onClick={() => setView('cockpit')}
-                    />
-                    <SidebarItem
-                        icon={HistoryIcon}
-                        label="Full History"
-                        active={currentView === 'history'}
-                        onClick={() => setView('history')}
-                    />
-                </nav>
-
-                <div className="p-4 border-t border-border">
-                    <div className="p-4 bg-muted/50 rounded-lg">
-                        <div className="flex justify-between items-center mb-2">
-                            <span className="text-xs text-muted-foreground font-medium">Session Health</span>
-                            <span className="text-xs text-primary font-bold">100%</span>
-                        </div>
-                        <div className="w-full bg-muted h-1 rounded-full overflow-hidden">
-                            <div className="bg-primary h-full w-full" />
-                        </div>
+                    <div className="flex items-center gap-2 text-xs font-semibold">
+                        <span className={`w-2.5 h-2.5 rounded-full ${status === 'online' ? 'bg-primary' : 'bg-destructive'} animate-pulse`} />
+                        <span className="uppercase tracking-wider text-muted-foreground">{status}</span>
                     </div>
-                </div>
-            </aside>
+                </header>
 
-            {/* Main Content */}
-            <main className="flex-1 flex flex-col p-2 gap-2 overflow-hidden">
-                {children}
-            </main>
+                <main className="flex-1 flex flex-col gap-2 md:gap-3 min-h-0">
+                    {children}
+                </main>
+            </div>
         </div>
     );
 };

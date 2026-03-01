@@ -1,9 +1,13 @@
-export const MAX_LOGS = 500;
-export const MAX_PRICES = 1000;
+export const MAX_LOGS = 300;
+export const MAX_PRICES = 2000;
 
-export type PricePoint = {
+export type CandlePoint = {
     time: number;
-    value: number;
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    volume?: number;
 };
 
 export interface TradeLog {
@@ -25,7 +29,6 @@ export interface EventProcessInput {
     message: DashboardEvent;
     isHistory: boolean;
     currentTrading: any;
-    currentPrices: PricePoint[];
     currentLogs: TradeLog[];
 }
 
@@ -33,8 +36,14 @@ export interface EventProcessOutput {
     updates: {
         status?: string;
         trading?: any;
-        activeNode?: string | null;
-        prices?: PricePoint[];
+        candles?: CandlePoint[];
+        market?: {
+            symbol?: string;
+            exchange?: string;
+            timeframe?: string;
+            current_price?: number;
+            price_change_24h?: number;
+        };
         logs?: TradeLog[];
     };
 }

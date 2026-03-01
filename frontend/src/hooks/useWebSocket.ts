@@ -77,13 +77,5 @@ export const useWebSocket = (url: string) => {
         };
     }, [url]);
 
-    const sendCommand = (type: string, data: any) => {
-        if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
-            socketRef.current.send(JSON.stringify({ type, data }));
-        } else {
-            console.warn(`WS not connected. Command skipped: ${type}`);
-        }
-    };
-
-    return { sendCommand };
+    return {};
 };

@@ -3,7 +3,8 @@ import {
     MAX_LOGS,
     MAX_PRICES,
 } from './types';
-import type { EventProcessInput, EventProcessOutput, PricePoint, TradeLog } from './types';
+import type { CandlePoint, EventProcessInput, EventProcessOutput, TradeLog } from './types';
+import { normalizeSymbol } from '../lib/market';
 
 const withTimestamp = (timestamp?: string) => timestamp || new Date().toISOString();
 
@@ -12,27 +13,25 @@ const buildLog = (payload: Omit<TradeLog, 'id'>): TradeLog => ({
     ...payload
 });
 
-const summarizeLlmLog = (data: any): string => {
-    const model = data?.model || 'LLM';
-    const node = data?.node || 'unknown';
-    const reasoning = typeof data?.reasoning === 'string' ? data.reasoning.trim() : '';
-    if (reasoning) {
-        return `[${node}] ${model}: ${reasoning.slice(0, 160)}`;
-    }
-    return `[${node}] ${model}: response received`;
-};
-
-const normalizePricePoint = (timestamp: string | undefined, rawPrice: number): PricePoint => {
-    const parsedTime = timestamp ? new Date(timestamp).getTime() / 1000 : Date.now() / 1000;
-    const roundedTime = Math.round(parsedTime * 1000) / 1000;
-    return { time: roundedTime, value: rawPrice };
+const normalizeCandles = (ohlcv: any[]): CandlePoint[] => {
+    if (!Array.isArray(ohlcv)) return [];
+    return ohlcv
+        .filter((row) => Array.isArray(row) && row.length >= 5)
+        .map((row) => ({
+            time: Math.round(Number(row[0]) / 1000),
+            open: Number(row[1]),
+            high: Number(row[2]),
+            low: Number(row[3]),
+            close: Number(row[4]),
+            volume: Number(row[5] ?? 0),
+        }))
+        .filter((c) => Number.isFinite(c.time) && Number.isFinite(c.close));
 };
 
 export const processDashboardEvent = ({
     message,
     isHistory,
     currentTrading,
-    currentPrices,
     currentLogs
 }: EventProcessInput): EventProcessOutput => {
     const { type, data = {}, timestamp } = message;
@@ -45,7 +44,6 @@ export const processDashboardEvent = ({
             break;
 
         case 'node_start':
-            updates.activeNode = data.node;
             break;
 
         case 'ai_thinking':
@@ -72,6 +70,16 @@ export const processDashboardEvent = ({
             break;
 
         case 'market_data_complete':
+            updates.market = {
+                symbol: normalizeSymbol(data.symbol),
+                exchange: data.exchange,
+                timeframe: data.timeframe,
+                current_price: data.current_price,
+                price_change_24h: data.price_change_24h
+            };
+            if (Array.isArray(data.ohlcv)) {
+                updates.candles = normalizeCandles(data.ohlcv).slice(-MAX_PRICES);
+            }
             eventLogs.push(buildLog({
                 type: 'market_data',
                 node: data.node,
@@ -136,20 +144,11 @@ export const processDashboardEvent = ({
             break;
 
         case 'market_update':
-            if (typeof data.price === 'number') {
-                const price = normalizePricePoint(timestamp, data.price);
-
-                if (isHistory) {
-                    updates.prices = [price];
-                } else {
-                    const lastPrice = currentPrices[currentPrices.length - 1];
-                    if (!lastPrice || price.time > lastPrice.time) {
-                        updates.prices = [...currentPrices, price].slice(-MAX_PRICES);
-                    } else if (price.time === lastPrice.time) {
-                        updates.prices = [...currentPrices.slice(0, -1), price];
-                    }
-                }
-            }
+            updates.market = {
+                symbol: normalizeSymbol(data.symbol),
+                timeframe: data.timeframe,
+                current_price: data.price
+            };
             break;
 
         case 'execution_complete':
@@ -163,17 +162,7 @@ export const processDashboardEvent = ({
             break;
 
         case 'llm_log':
-            eventLogs.push(buildLog({
-                type: 'llm_log',
-                node: data.node,
-                message: summarizeLlmLog(data),
-                timestamp: eventTs,
-                data: {
-                    model: data.model,
-                    node: data.node,
-                    reasoning: data.reasoning,
-                }
-            }));
+            // Skip verbose model internals in the cockpit log; keep only actionable events.
             break;
 
         case 'order_monitor_update':

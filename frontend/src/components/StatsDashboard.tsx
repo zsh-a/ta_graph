@@ -2,13 +2,13 @@ import { useStore } from '../store';
 import { DollarSign, TrendingDown, Target, ShieldCheck } from 'lucide-react';
 
 const StatCard = ({ label, value, subValue, icon: Icon, colorClass }: any) => (
-    <div className="glass-card p-4 flex-1">
+    <div className="glass-card p-4">
         <div className="flex justify-between items-start mb-1">
             <span className="text-[10px] uppercase font-bold tracking-widest text-muted-foreground">{label}</span>
             <Icon size={16} className={colorClass} />
         </div>
         <div className="flex items-baseline gap-2">
-            <h2 className="text-2xl font-bold tracking-tight">{value}</h2>
+            <h2 className="text-xl md:text-2xl font-bold tracking-tight">{value}</h2>
             {subValue && <span className={`text-xs font-bold ${colorClass}`}>{subValue}</span>}
         </div>
     </div>
@@ -21,9 +21,9 @@ export const StatsDashboard = () => {
     const isPositive = pnl >= 0;
 
     return (
-        <div className="grid grid-cols-4 gap-2">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 md:gap-3">
             <StatCard
-                label="Net Realized PnL"
+                label="Net PnL"
                 value={`$${pnl.toFixed(2)}`}
                 subValue={trading.pnl_percentage ? `${trading.pnl_percentage >= 0 ? '+' : ''}${trading.pnl_percentage.toFixed(2)}%` : '--'}
                 icon={DollarSign}
@@ -45,7 +45,7 @@ export const StatsDashboard = () => {
             />
             <StatCard
                 label="Risk Guard"
-                value={safety.equity_protector?.is_active ? "ENABLED" : "ACTIVE"}
+                value={safety.equity_protector?.is_active ? 'ENABLED' : 'ACTIVE'}
                 subValue={`${safety.error_count || 0} ERRS`}
                 icon={ShieldCheck}
                 colorClass="text-primary"

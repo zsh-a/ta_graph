@@ -1,76 +1,54 @@
-import React from 'react';
 import { AppLayout } from './AppLayout';
 import { useWebSocket } from './hooks/useWebSocket';
 import { useStore } from './store';
 import { getWsUrl } from './lib/api';
-import { AlertTriangle, Radiation } from 'lucide-react';
-
-// View Components
 import { CockpitView } from './views/CockpitView';
-import { HistoryView } from './views/HistoryView';
 
-/**
- * View mapping for the dashboard navigation.
- * Easily extensible by adding new keys and components here.
- */
-const VIEW_MAP: Record<string, React.FC> = {
-  cockpit: CockpitView,
-  history: HistoryView,
-};
+import { formatTradingPair } from './lib/market';
 
 function App() {
   const wsUrl = getWsUrl();
-  const { sendCommand } = useWebSocket(wsUrl);
-  const currentView = useStore((state) => state.currentView);
+  useWebSocket(wsUrl);
+  const market = useStore((state) => state.market);
+  const position = useStore((state) => state.trading.current_position);
 
-  const handlePanic = () => {
-    if (confirm('EMERGENCY: CLEAR ALL POSITIONS AND STOP EXECUTION?')) {
-      sendCommand('panic_button', { reason: 'manual_intervention' });
-    }
-  };
-
-  // Get the active component based on store state
-  const ActiveView = VIEW_MAP[currentView] || CockpitView;
+  const activePair = formatTradingPair(position?.symbol || market.symbol);
+  const exchange = (market.exchange || 'N/A').toUpperCase();
+  const timeframe = market.timeframe || '--';
+  const lastPrice = Number.isFinite(market.current_price) ? market.current_price : 0;
+  const change24h = Number.isFinite(market.price_change_24h) ? market.price_change_24h : 0;
 
   return (
     <AppLayout>
-      {/* Top Controls (Static across all views) */}
-      <div className="flex justify-between items-center px-4 py-2 glass-card">
-        <div className="flex items-center gap-6">
+      <div className="px-4 py-3 glass-card border-primary/20">
+        <div className="flex flex-wrap items-center gap-4 xl:gap-6">
           <div className="flex flex-col">
             <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-widest">Active Pair</span>
-            <span className="text-xl font-bold tracking-tighter">
-              BTCUSD.PERP <span className="text-muted-foreground font-normal">/ Bitget</span>
+            <span className="text-xl font-bold tracking-tight">
+              {activePair} <span className="text-muted-foreground font-normal">/ {exchange}</span>
             </span>
           </div>
-          <div className="h-8 w-[1px] bg-border" />
+          <div className="hidden md:block h-8 w-[1px] bg-border" />
           <div className="flex flex-col">
-            <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-widest">Strategy</span>
-            <span className="text-primary font-bold">Brooks PA Supervisor</span>
+            <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-widest">Timeframe</span>
+            <span className="font-semibold">{timeframe}</span>
           </div>
-        </div>
-
-        <div className="flex items-center gap-3">
-          <button
-            className="flex items-center gap-2 px-4 py-2 bg-muted hover:bg-muted-foreground/20 rounded-lg transition-colors text-sm font-bold border border-border"
-            onClick={() => sendCommand('manual_approval', { decision: 'approve' })}
-          >
-            <AlertTriangle size={16} className="text-accent" />
-            PENDING APPROVAL
-          </button>
-
-          <button
-            className="flex items-center gap-2 px-4 py-2 bg-destructive text-destructive-foreground hover:opacity-90 rounded-lg transition-all shadow-lg shadow-destructive/20 font-bold active:scale-95"
-            onClick={handlePanic}
-          >
-            <Radiation size={18} />
-            PANIC BUTTON
-          </button>
+          <div className="hidden md:block h-8 w-[1px] bg-border" />
+          <div className="flex flex-col">
+            <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-widest">Last Price</span>
+            <span className="font-semibold">${lastPrice > 0 ? lastPrice.toLocaleString(undefined, { maximumFractionDigits: 2 }) : '--'}</span>
+          </div>
+          <div className="hidden md:block h-8 w-[1px] bg-border" />
+          <div className="flex flex-col">
+            <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-widest">24h Change</span>
+            <span className={`font-semibold ${change24h >= 0 ? 'text-primary' : 'text-destructive'}`}>
+              {change24h >= 0 ? '+' : ''}{change24h.toFixed(2)}%
+            </span>
+          </div>
         </div>
       </div>
 
-      {/* Dynamic View Content */}
-      <ActiveView />
+      <CockpitView />
     </AppLayout>
   );
 }
