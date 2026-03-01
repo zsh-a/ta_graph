@@ -1,13 +1,14 @@
 import React from 'react';
 import { useStore } from '../store';
-import { BrainCircuit, AlertTriangle, CheckCircle2, Shield, Rocket, TrendingUp } from 'lucide-react';
+import { BrainCircuit, AlertTriangle, CheckCircle2, Shield, Rocket, TrendingUp, MessageSquareText } from 'lucide-react';
 
 type DisplayLog = {
     id: string;
     title: string;
     detail: string;
     timestamp: string;
-    tone: 'neutral' | 'good' | 'warn' | 'risk' | 'exec';
+    tone: 'neutral' | 'good' | 'warn' | 'risk' | 'exec' | 'llm';
+    content?: string;
 };
 
 const toDisplayLog = (log: any): DisplayLog | null => {
@@ -44,6 +45,23 @@ const toDisplayLog = (log: any): DisplayLog | null => {
             detail: log.message || 'Order status update',
             timestamp: log.timestamp,
             tone: 'exec',
+        };
+    }
+
+    if (log.type === 'llm_log') {
+        const model = typeof data.model === 'string' ? data.model : 'LLM';
+        const reasoning = typeof data.reasoning === 'string' ? data.reasoning.trim() : '';
+        const response = typeof data.response === 'string' ? data.response.trim() : '';
+        const prompt = typeof data.prompt === 'string' ? data.prompt.trim() : '';
+        const content = response || reasoning || prompt;
+
+        return {
+            id: log.id,
+            title: 'LLM Output',
+            detail: `${model} · ${log.node || 'llm'}`,
+            timestamp: log.timestamp,
+            tone: 'llm',
+            content,
         };
     }
 
@@ -86,6 +104,7 @@ const toneStyle: Record<DisplayLog['tone'], string> = {
     warn: 'border-destructive/30 bg-destructive/5 text-foreground',
     risk: 'border-amber-500/30 bg-amber-500/5 text-foreground',
     exec: 'border-sky-500/30 bg-sky-500/5 text-foreground',
+    llm: 'border-cyan-500/30 bg-cyan-500/5 text-foreground',
 };
 
 const toneIcon = (tone: DisplayLog['tone']) => {
@@ -93,6 +112,7 @@ const toneIcon = (tone: DisplayLog['tone']) => {
     if (tone === 'warn') return <AlertTriangle size={14} className="text-destructive" />;
     if (tone === 'risk') return <Shield size={14} className="text-amber-400" />;
     if (tone === 'exec') return <Rocket size={14} className="text-sky-400" />;
+    if (tone === 'llm') return <MessageSquareText size={14} className="text-cyan-400" />;
     return <TrendingUp size={14} className="text-muted-foreground" />;
 };
 
@@ -144,6 +164,16 @@ export const AIBrainTerminal: React.FC<{ className?: string }> = ({ className })
                             </span>
                         </div>
                         <p className="mt-1 text-[11px] text-muted-foreground leading-relaxed">{log.detail}</p>
+                        {log.content ? (
+                            <details className="mt-2">
+                                <summary className="cursor-pointer text-[10px] text-muted-foreground hover:text-foreground">
+                                    View LLM Text
+                                </summary>
+                                <pre className="mt-1.5 whitespace-pre-wrap break-words rounded-md border border-border/70 bg-background/40 p-2 text-[11px] leading-relaxed text-foreground/90">
+                                    {log.content}
+                                </pre>
+                            </details>
+                        ) : null}
                     </article>
                 ))}
 

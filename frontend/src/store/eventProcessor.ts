@@ -13,6 +13,13 @@ const buildLog = (payload: Omit<TradeLog, 'id'>): TradeLog => ({
     ...payload
 });
 
+const toText = (value: unknown, maxLen = 1600): string => {
+    if (typeof value !== 'string') return '';
+    const normalized = value.replace(/\s+\n/g, '\n').trim();
+    if (!normalized) return '';
+    return normalized.length > maxLen ? `${normalized.slice(0, maxLen)}...` : normalized;
+};
+
 const normalizeCandles = (ohlcv: any[]): CandlePoint[] => {
     if (!Array.isArray(ohlcv)) return [];
     return ohlcv
@@ -162,7 +169,18 @@ export const processDashboardEvent = ({
             break;
 
         case 'llm_log':
-            // Skip verbose model internals in the cockpit log; keep only actionable events.
+            eventLogs.push(buildLog({
+                type: 'llm_log',
+                node: data.node || 'llm',
+                message: `LLM output (${data.model || 'unknown model'})`,
+                timestamp: eventTs,
+                data: {
+                    model: data.model || 'unknown',
+                    prompt: toText(data.prompt, 800),
+                    reasoning: toText(data.reasoning, 1600),
+                    response: toText(data.response, 2400),
+                }
+            }));
             break;
 
         case 'order_monitor_update':
