@@ -35,6 +35,19 @@ from ..models.decisions import (
 
 # ==================== Prompts ====================
 
+class BrooksContextPhase(BaseModel):
+    """Phase 1 output: market background only (no trigger or risk)."""
+    market_cycle: Literal[
+        "strong_bull_trend", "weak_bull_trend",
+        "strong_bear_trend", "weak_bear_trend",
+        "trading_range", "breakout_mode", "climax"
+    ]
+    always_in_direction: Literal["long", "short", "neutral"]
+    buying_pressure: int = Field(ge=0, le=10)
+    selling_pressure: int = Field(ge=0, le=10)
+    context_summary: str
+    ema20_relationship: Literal["strong_above", "above", "at", "below", "strong_below"]
+
 def get_brooks_analysis_prompt(
     bar_data_table: str,
     include_htf: bool = False,
@@ -108,11 +121,77 @@ Return valid JSON matching the schema.
 3. **Trend Logic**: In a Strong Bull Trend, ignore weak sell signals (Counter-Trend). In a Strong Bear Trend, ignore weak buy signals.
 """
 
+def get_brooks_context_prompt(
+    bar_data_table: str,
+    include_htf: bool = False,
+    htf_summary: str = ""
+) -> str:
+    """Phase 1 prompt: infer only market background from HTF + Context."""
+    htf_section = ""
+    if include_htf:
+        htf_section = f"""
+## Higher Timeframe Context
+{htf_summary}
+RULE: Use HTF only as directional/bias context.
+"""
+
+    return f"""You are Al Brooks. PHASE 1 ONLY.
+Your task is to infer market background from CONTEXT chart (and HTF if provided).
+Do NOT output trade setup, signal bar quality, or risk parameters.
+
+{htf_section}
+## Required Output (JSON schema)
+- market_cycle
+- always_in_direction
+- buying_pressure (0-10)
+- selling_pressure (0-10)
+- context_summary
+- ema20_relationship
+
+## Rules
+1. Use only CONTEXT/HTF structure to determine cycle and direction.
+2. Ignore micro trigger details; that belongs to PHASE 2.
+3. Be conservative in choppy overlap conditions.
+
+## Bar Data (Text)
+{bar_data_table}
+"""
+
+def get_brooks_trigger_prompt(
+    bar_data_table: str,
+    frozen_context: BrooksContextPhase
+) -> str:
+    """Phase 2 prompt: refine trigger and risk while keeping context fixed."""
+    frozen_json = json.dumps(frozen_context.model_dump(), indent=2)
+    return f"""You are Al Brooks. PHASE 2 ONLY.
+You are given a FROZEN market background from Phase 1. You MUST keep it unchanged.
+
+## Frozen Context (DO NOT CHANGE)
+{frozen_json}
+
+## Your Task
+Use Focus chart for trigger quality, pattern confirmation, and risk definition.
+Return full BrooksAnalysis JSON.
+
+## Hard Constraints
+1. market_cycle MUST equal frozen market_cycle.
+2. always_in_direction MUST equal frozen always_in_direction.
+3. ema20_relationship MUST equal frozen ema20_relationship.
+4. buying_pressure/selling_pressure should remain consistent with frozen context.
+5. If signal quality is poor, return recommended_action=\"wait\".
+
+## Bar Data (Text)
+{bar_data_table}
+"""
+
 def create_brooks_messages(
     prompt_text: str,
     chart_image_path: str,
     focus_chart_path: str | None = None,
-    htf_chart_path: str | None = None
+    htf_chart_path: str | None = None,
+    include_context: bool = True,
+    include_focus: bool = True,
+    include_htf: bool = True
 ) -> list[HumanMessage]:
     """Create message list with text and image(s) for VL model"""
     
@@ -125,7 +204,7 @@ def create_brooks_messages(
     ]
     
     # Add HTF chart first if available (for context)
-    if htf_chart_path and os.path.exists(htf_chart_path):
+    if include_htf and htf_chart_path and os.path.exists(htf_chart_path):
         htf_base64 = encode_image(htf_chart_path)
         content_parts.append({
             "type": "image_url",
@@ -139,7 +218,7 @@ def create_brooks_messages(
         })
     
     # Add Context chart (Primary)
-    if os.path.exists(chart_image_path):
+    if include_context and os.path.exists(chart_image_path):
         primary_base64 = encode_image(chart_image_path)
         content_parts.append({
             "type": "image_url",
@@ -153,7 +232,7 @@ def create_brooks_messages(
         })
 
     # Add Focus chart (Detail)
-    if focus_chart_path and os.path.exists(focus_chart_path):
+    if include_focus and focus_chart_path and os.path.exists(focus_chart_path):
         focus_base64 = encode_image(focus_chart_path)
         content_parts.append({
             "type": "image_url",
@@ -163,7 +242,7 @@ def create_brooks_messages(
         })
         content_parts.append({
             "type": "text",
-            "text": "☝️ ABOVE: Focus Chart (Zoomed-in view of the last 30 bars). Use this for precise calculations!"
+            "text": "☝️ ABOVE: Focus Chart (Zoomed-in view of the last 30 bars). Use this for trigger refinement ONLY."
         })
     
     return [HumanMessage(content=content_parts)]
@@ -244,6 +323,42 @@ def validate_brooks_analysis(
         "valid": valid,
         "warnings": warnings,
         "errors": errors
+    }
+
+def evaluate_phase_consistency(
+    phase1: BrooksContextPhase,
+    phase2_raw: BrooksAnalysis
+) -> dict[str, Any]:
+    """
+    Evaluate drift between phase-1 background and raw phase-2 output.
+    Returns a compact score and changed fields for observability.
+    """
+    changed_fields: list[str] = []
+    penalties = 0
+
+    if phase2_raw.market_cycle != phase1.market_cycle:
+        changed_fields.append("market_cycle")
+        penalties += 4
+    if phase2_raw.always_in_direction != phase1.always_in_direction:
+        changed_fields.append("always_in_direction")
+        penalties += 4
+    if phase2_raw.ema20_relationship != phase1.ema20_relationship:
+        changed_fields.append("ema20_relationship")
+        penalties += 3
+
+    buy_pressure_delta = abs(int(phase2_raw.buying_pressure) - int(phase1.buying_pressure))
+    sell_pressure_delta = abs(int(phase2_raw.selling_pressure) - int(phase1.selling_pressure))
+
+    # Pressure deltas contribute softly; large shifts indicate focus over-dominance.
+    penalties += min(3, buy_pressure_delta // 3)
+    penalties += min(3, sell_pressure_delta // 3)
+
+    drift_score = max(0, 10 - penalties)
+    return {
+        "drift_score": drift_score,  # 0 (worst) - 10 (best)
+        "changed_fields": changed_fields,
+        "buying_pressure_delta": buy_pressure_delta,
+        "selling_pressure_delta": sell_pressure_delta,
     }
 
 # ==================== Fallback Function ====================
@@ -341,33 +456,90 @@ HTF Always In: {htf_analysis.get('always_in_direction', 'Unknown')}
 HTF Signal: {htf_analysis.get('signal', 'Unknown')}
 """
     
-    prompt_text = get_brooks_analysis_prompt(
+    has_htf_chart = bool(htf_chart_path and os.path.exists(htf_chart_path))
+
+    phase1_prompt = get_brooks_context_prompt(
         bar_data_table=bar_data_table,
-        include_htf=bool(htf_chart_path),
+        include_htf=has_htf_chart,
         htf_summary=htf_summary
     )
     
-    bus.emit_sync("ai_thinking", {"node": "brooks_analyzer", "step": "analyzing_chart", "message": "Analyzing price action with Brooks methodology..."})
-    
-    # Create messages with images
-    messages = create_brooks_messages(
-        prompt_text=prompt_text,
+    bus.emit_sync("ai_thinking", {"node": "brooks_analyzer", "step": "phase1_context", "message": "Phase 1/2: inferring market background from context..."})
+
+    # Phase 1: Context-only inference (HTF + Context, no Focus)
+    phase1_messages = create_brooks_messages(
+        prompt_text=phase1_prompt,
         chart_image_path=chart_path,
-        focus_chart_path=focus_chart_path,
-        htf_chart_path=htf_chart_path
+        focus_chart_path=None,
+        htf_chart_path=htf_chart_path,
+        include_context=True,
+        include_focus=False,
+        include_htf=has_htf_chart,
     )
     
-    # Get LLM with structured output
+    # Get LLM with structured outputs
     llm = get_llm()
-    structured_llm = llm.with_structured_output(BrooksAnalysis)
+    phase1_llm = llm.with_structured_output(BrooksContextPhase)
+    phase2_llm = llm.with_structured_output(BrooksAnalysis)
     
     try:
-        # Invoke VL model
-        brooks_analysis = structured_llm.invoke(messages)
+        context_phase = phase1_llm.invoke(phase1_messages)
+        if not context_phase:
+            logger.error("Brooks context phase returned None")
+            return {"brooks_analysis": None}
+
+        bus.emit_sync("ai_thinking", {"node": "brooks_analyzer", "step": "phase2_trigger", "message": "Phase 2/2: refining trigger and risk with focus chart..."})
+
+        phase2_prompt = get_brooks_trigger_prompt(
+            bar_data_table=bar_data_table,
+            frozen_context=context_phase
+        )
+
+        # Phase 2: Trigger/risk refinement (Context + Focus, context frozen in prompt)
+        phase2_messages = create_brooks_messages(
+            prompt_text=phase2_prompt,
+            chart_image_path=chart_path,
+            focus_chart_path=focus_chart_path,
+            htf_chart_path=htf_chart_path,
+            include_context=True,
+            include_focus=bool(focus_chart_path and os.path.exists(focus_chart_path)),
+            include_htf=has_htf_chart,
+        )
+
+        brooks_analysis = phase2_llm.invoke(phase2_messages)
         
         if not brooks_analysis:
             logger.error("Brooks analysis returned None")
             return {"brooks_analysis": None}
+
+        raw_phase2 = brooks_analysis.model_dump()
+        phase_consistency = evaluate_phase_consistency(context_phase, brooks_analysis)
+        if phase_consistency["drift_score"] < 7:
+            logger.warning("Phase consistency drift_score low: %s", phase_consistency)
+
+        # Lock background fields from Phase 1 to prevent phase-2 drift.
+        if brooks_analysis.market_cycle != context_phase.market_cycle:
+            logger.warning(
+                "Phase2 changed market_cycle (%s -> %s). Overriding with Phase1.",
+                context_phase.market_cycle, brooks_analysis.market_cycle
+            )
+            brooks_analysis.market_cycle = context_phase.market_cycle
+        if brooks_analysis.always_in_direction != context_phase.always_in_direction:
+            logger.warning(
+                "Phase2 changed always_in_direction (%s -> %s). Overriding with Phase1.",
+                context_phase.always_in_direction, brooks_analysis.always_in_direction
+            )
+            brooks_analysis.always_in_direction = context_phase.always_in_direction
+        if brooks_analysis.ema20_relationship != context_phase.ema20_relationship:
+            logger.warning(
+                "Phase2 changed ema20_relationship (%s -> %s). Overriding with Phase1.",
+                context_phase.ema20_relationship, brooks_analysis.ema20_relationship
+            )
+            brooks_analysis.ema20_relationship = context_phase.ema20_relationship
+        brooks_analysis.buying_pressure = context_phase.buying_pressure
+        brooks_analysis.selling_pressure = context_phase.selling_pressure
+        if not brooks_analysis.context_summary:
+            brooks_analysis.context_summary = context_phase.context_summary
         
         # Validate against OHLC data
         ema20_values = []
@@ -383,6 +555,11 @@ HTF Signal: {htf_analysis.get('signal', 'Unknown')}
             ohlcv_data=ohlcv,
             ema20_values=ema20_values
         )
+        validation_result["phase_consistency"] = phase_consistency
+        if phase_consistency["drift_score"] < 5:
+            validation_result["warnings"].append(
+                f"Phase drift is high (score={phase_consistency['drift_score']}/10); focus chart may be overpowering context."
+            )
         
         # Log validation warnings/errors
         if validation_result['warnings']:
@@ -402,9 +579,14 @@ HTF Signal: {htf_analysis.get('signal', 'Unknown')}
         # NEW: Emit LLM log for frontend display (similar to strategy node)
         bus.emit_sync("llm_log", {
             "node": "brooks_analyzer",
-            "model": "VL Model (Brooks Analysis)",
-            "prompt": prompt_text,
-            "response": json.dumps(analysis_dict, indent=2),
+            "model": "VL Model (Brooks 2-Phase)",
+            "prompt": f"[PHASE 1]\n{phase1_prompt}\n\n[PHASE 2]\n{phase2_prompt}",
+            "response": json.dumps({
+                "phase1_context": context_phase.model_dump(),
+                "phase2_raw": raw_phase2,
+                "phase2_final": analysis_dict,
+                "phase_consistency": phase_consistency
+            }, indent=2),
             "reasoning": analysis_dict.get("context_summary", "")
         })
         

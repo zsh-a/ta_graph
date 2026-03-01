@@ -37,6 +37,18 @@ export interface EventProcessOutput {
         status?: string;
         trading?: any;
         candles?: CandlePoint[];
+        analysis?: {
+            market_cycle?: string;
+            always_in_direction?: string;
+            setup_quality?: number;
+            drift_score?: number;
+            changed_fields?: string[];
+            buying_pressure_delta?: number;
+            selling_pressure_delta?: number;
+            validation_valid?: boolean;
+            warning_count?: number;
+            error_count?: number;
+        };
         market?: {
             symbol?: string;
             exchange?: string;

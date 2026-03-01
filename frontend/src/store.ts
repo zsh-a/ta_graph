@@ -28,6 +28,19 @@ interface DashboardState {
     safety: SafetyState;
     logs: TradeLog[];
     candles: CandlePoint[];
+    driftHistory: number[];
+    analysis: {
+        market_cycle: string;
+        always_in_direction: string;
+        setup_quality: number;
+        drift_score: number;
+        changed_fields: string[];
+        buying_pressure_delta: number;
+        selling_pressure_delta: number;
+        validation_valid: boolean;
+        warning_count: number;
+        error_count: number;
+    };
     market: {
         symbol: string;
         exchange: string;
@@ -51,6 +64,11 @@ const dedupeAndSortCandles = (rawCandles: CandlePoint[]) => {
     return [...map.values()].slice(-MAX_PRICES);
 };
 
+const pushDriftScore = (history: number[], score: number) => {
+    if (!Number.isFinite(score)) return history;
+    return [...history, score].slice(-50);
+};
+
 export const useStore = create<DashboardState>((set, get) => ({
     status: 'offline',
     system: { heartbeat_count: 0, last_heartbeat: null },
@@ -68,6 +86,19 @@ export const useStore = create<DashboardState>((set, get) => ({
     safety: { equity_protector: {}, error_count: 0, last_error: null },
     logs: [],
     candles: [],
+    driftHistory: [],
+    analysis: {
+        market_cycle: 'unknown',
+        always_in_direction: 'neutral',
+        setup_quality: 0,
+        drift_score: 0,
+        changed_fields: [],
+        buying_pressure_delta: 0,
+        selling_pressure_delta: 0,
+        validation_valid: false,
+        warning_count: 0,
+        error_count: 0
+    },
     market: {
         symbol: 'BTCUSDT',
         exchange: 'bitget',
@@ -80,6 +111,8 @@ export const useStore = create<DashboardState>((set, get) => ({
         let accumulatedLogs: TradeLog[] = [];
         let accumulatedCandles: CandlePoint[] = [];
         let replayStatus = data.system?.status || state.status;
+        let replayDriftHistory = state.driftHistory;
+        let replayAnalysis: DashboardState['analysis'] = state.analysis;
         let replayMarket: DashboardState['market'] = state.market;
 
         if (Array.isArray(data.history)) {
@@ -99,6 +132,23 @@ export const useStore = create<DashboardState>((set, get) => ({
                 }
                 if (updates.status !== undefined) {
                     replayStatus = updates.status;
+                }
+                if (updates.analysis !== undefined) {
+                    if (Number.isFinite(updates.analysis.drift_score)) {
+                        replayDriftHistory = pushDriftScore(replayDriftHistory, Number(updates.analysis.drift_score));
+                    }
+                    replayAnalysis = {
+                        market_cycle: updates.analysis.market_cycle ?? replayAnalysis.market_cycle,
+                        always_in_direction: updates.analysis.always_in_direction ?? replayAnalysis.always_in_direction,
+                        setup_quality: updates.analysis.setup_quality ?? replayAnalysis.setup_quality,
+                        drift_score: updates.analysis.drift_score ?? replayAnalysis.drift_score,
+                        changed_fields: updates.analysis.changed_fields ?? replayAnalysis.changed_fields,
+                        buying_pressure_delta: updates.analysis.buying_pressure_delta ?? replayAnalysis.buying_pressure_delta,
+                        selling_pressure_delta: updates.analysis.selling_pressure_delta ?? replayAnalysis.selling_pressure_delta,
+                        validation_valid: updates.analysis.validation_valid ?? replayAnalysis.validation_valid,
+                        warning_count: updates.analysis.warning_count ?? replayAnalysis.warning_count,
+                        error_count: updates.analysis.error_count ?? replayAnalysis.error_count,
+                    };
                 }
                 if (updates.market !== undefined) {
                     replayMarket = {
@@ -121,6 +171,8 @@ export const useStore = create<DashboardState>((set, get) => ({
             safety: data.safety || state.safety,
             logs: accumulatedLogs.slice(0, MAX_LOGS),
             candles: dedupeAndSortCandles(accumulatedCandles),
+            driftHistory: replayDriftHistory,
+            analysis: replayAnalysis,
             market: replayMarket
         };
     }),
@@ -136,6 +188,23 @@ export const useStore = create<DashboardState>((set, get) => ({
 
         const normalizedUpdates: Partial<DashboardState> = {
             ...updates,
+            driftHistory: updates.analysis && Number.isFinite(updates.analysis.drift_score)
+                ? pushDriftScore(state.driftHistory, Number(updates.analysis.drift_score))
+                : undefined,
+            analysis: updates.analysis
+                ? {
+                    market_cycle: updates.analysis.market_cycle ?? state.analysis.market_cycle,
+                    always_in_direction: updates.analysis.always_in_direction ?? state.analysis.always_in_direction,
+                    setup_quality: updates.analysis.setup_quality ?? state.analysis.setup_quality,
+                    drift_score: updates.analysis.drift_score ?? state.analysis.drift_score,
+                    changed_fields: updates.analysis.changed_fields ?? state.analysis.changed_fields,
+                    buying_pressure_delta: updates.analysis.buying_pressure_delta ?? state.analysis.buying_pressure_delta,
+                    selling_pressure_delta: updates.analysis.selling_pressure_delta ?? state.analysis.selling_pressure_delta,
+                    validation_valid: updates.analysis.validation_valid ?? state.analysis.validation_valid,
+                    warning_count: updates.analysis.warning_count ?? state.analysis.warning_count,
+                    error_count: updates.analysis.error_count ?? state.analysis.error_count,
+                }
+                : undefined,
             market: updates.market
                 ? {
                     symbol: updates.market.symbol ?? state.market.symbol,

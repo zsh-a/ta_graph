@@ -57,6 +57,20 @@ export const processDashboardEvent = ({
             break;
 
         case 'analysis_complete':
+            updates.analysis = {
+                market_cycle: data.analysis?.market_cycle,
+                always_in_direction: data.analysis?.always_in_direction,
+                setup_quality: data.analysis?.setup_quality,
+                drift_score: data.analysis?._validation?.phase_consistency?.drift_score,
+                changed_fields: Array.isArray(data.analysis?._validation?.phase_consistency?.changed_fields)
+                    ? data.analysis._validation.phase_consistency.changed_fields
+                    : [],
+                buying_pressure_delta: data.analysis?._validation?.phase_consistency?.buying_pressure_delta,
+                selling_pressure_delta: data.analysis?._validation?.phase_consistency?.selling_pressure_delta,
+                validation_valid: data.analysis?._validation?.valid,
+                warning_count: Array.isArray(data.analysis?._validation?.warnings) ? data.analysis._validation.warnings.length : 0,
+                error_count: Array.isArray(data.analysis?._validation?.errors) ? data.analysis._validation.errors.length : 0,
+            };
             eventLogs.push(buildLog({
                 type: 'success',
                 node: data.node,

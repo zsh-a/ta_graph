@@ -53,12 +53,15 @@ const toDisplayLog = (log: any): DisplayLog | null => {
         const reasoning = typeof data.reasoning === 'string' ? data.reasoning.trim() : '';
         const response = typeof data.response === 'string' ? data.response.trim() : '';
         const prompt = typeof data.prompt === 'string' ? data.prompt.trim() : '';
+        const driftScore = typeof data.response === 'string'
+            ? (data.response.match(/"drift_score"\s*:\s*(\d+(?:\.\d+)?)/)?.[1] ?? '')
+            : '';
         const content = response || reasoning || prompt;
 
         return {
             id: log.id,
             title: 'LLM Output',
-            detail: `${model} · ${log.node || 'llm'}`,
+            detail: `${model} · ${log.node || 'llm'}${driftScore ? ` · drift ${driftScore}/10` : ''}`,
             timestamp: log.timestamp,
             tone: 'llm',
             content,
@@ -118,6 +121,7 @@ const toneIcon = (tone: DisplayLog['tone']) => {
 
 export const AIBrainTerminal: React.FC<{ className?: string }> = ({ className }) => {
     const logs = useStore((state) => state.logs);
+    const analysis = useStore((state) => state.analysis);
     const [showAll, setShowAll] = React.useState(false);
 
     const displayLogs = React.useMemo(() => {
@@ -152,6 +156,18 @@ export const AIBrainTerminal: React.FC<{ className?: string }> = ({ className })
             </header>
 
             <div className="flex-1 overflow-y-auto space-y-2 pr-1">
+                {analysis.drift_score < 5 ? (
+                    <article className="border rounded-lg p-2.5 border-destructive/40 bg-destructive/10 text-foreground">
+                        <div className="flex items-center gap-2">
+                            <AlertTriangle size={14} className="text-destructive" />
+                            <span className="text-[11px] font-semibold">Context Drift Alert</span>
+                        </div>
+                        <p className="mt-1 text-[11px] text-muted-foreground leading-relaxed">
+                            drift {analysis.drift_score.toFixed(1)}/10 · changed: {analysis.changed_fields.length ? analysis.changed_fields.join(', ') : 'none'} · Δbuy {analysis.buying_pressure_delta} · Δsell {analysis.selling_pressure_delta}
+                        </p>
+                    </article>
+                ) : null}
+
                 {displayLogs.map((log) => (
                     <article key={log.id} className={`border rounded-lg p-2.5 ${toneStyle[log.tone]}`}>
                         <div className="flex items-center justify-between gap-2">

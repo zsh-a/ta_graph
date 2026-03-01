@@ -11,12 +11,17 @@ function App() {
   useWebSocket(wsUrl);
   const market = useStore((state) => state.market);
   const position = useStore((state) => state.trading.current_position);
+  const analysis = useStore((state) => state.analysis);
 
   const activePair = formatTradingPair(position?.symbol || market.symbol);
   const exchange = (market.exchange || 'N/A').toUpperCase();
   const timeframe = market.timeframe || '--';
   const lastPrice = Number.isFinite(market.current_price) ? market.current_price : 0;
   const change24h = Number.isFinite(market.price_change_24h) ? market.price_change_24h : 0;
+  const driftScore = Number.isFinite(analysis.drift_score) ? analysis.drift_score : 0;
+  const consistencyClass = driftScore >= 8 ? 'text-primary' : driftScore >= 6 ? 'text-amber-400' : 'text-destructive';
+  const changedFields = analysis.changed_fields?.length ? analysis.changed_fields.join(', ') : 'none';
+  const consistencyHint = `Changed: ${changedFields} | Δbuy:${analysis.buying_pressure_delta ?? 0} Δsell:${analysis.selling_pressure_delta ?? 0} | warnings:${analysis.warning_count} errors:${analysis.error_count}`;
 
   return (
     <AppLayout>
@@ -43,6 +48,16 @@ function App() {
             <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-widest">24h Change</span>
             <span className={`font-semibold ${change24h >= 0 ? 'text-primary' : 'text-destructive'}`}>
               {change24h >= 0 ? '+' : ''}{change24h.toFixed(2)}%
+            </span>
+          </div>
+          <div className="hidden md:block h-8 w-[1px] bg-border" />
+          <div className="flex flex-col">
+            <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-widest">Context Consistency</span>
+            <span className={`font-semibold ${consistencyClass}`} title={consistencyHint}>
+              {driftScore.toFixed(1)}/10
+            </span>
+            <span className="text-[10px] text-muted-foreground">
+              W{analysis.warning_count} E{analysis.error_count}
             </span>
           </div>
         </div>
