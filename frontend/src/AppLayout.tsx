@@ -1,5 +1,5 @@
 import React from 'react';
-import { Activity, LayoutDashboard, Brain, PieChart, ShieldAlert, Zap, History as HistoryIcon } from 'lucide-react';
+import { LayoutDashboard, Zap, History as HistoryIcon } from 'lucide-react';
 import { useStore } from './store';
 
 interface SidebarItemProps {
@@ -20,7 +20,9 @@ const SidebarItem = ({ icon: Icon, label, active, onClick }: SidebarItemProps) =
 );
 
 export const AppLayout = ({ children }: { children: React.ReactNode }) => {
-    const { status, currentView, setView } = useStore();
+    const status = useStore((state) => state.status);
+    const currentView = useStore((state) => state.currentView);
+    const setView = useStore((state) => state.setView);
 
     return (
         <div className="flex h-screen bg-background text-foreground overflow-hidden">
@@ -45,30 +47,6 @@ export const AppLayout = ({ children }: { children: React.ReactNode }) => {
                         label="Cockpit"
                         active={currentView === 'cockpit'}
                         onClick={() => setView('cockpit')}
-                    />
-                    <SidebarItem
-                        icon={Activity}
-                        label="Live Charts"
-                        active={currentView === 'charts'}
-                        onClick={() => setView('charts')}
-                    />
-                    <SidebarItem
-                        icon={Brain}
-                        label="AI Reasoning"
-                        active={currentView === 'reasoning'}
-                        onClick={() => setView('reasoning')}
-                    />
-                    <SidebarItem
-                        icon={PieChart}
-                        label="Portfolio"
-                        active={currentView === 'portfolio'}
-                        onClick={() => setView('portfolio')}
-                    />
-                    <SidebarItem
-                        icon={ShieldAlert}
-                        label="Safety & Logs"
-                        active={currentView === 'safety'}
-                        onClick={() => setView('safety')}
                     />
                     <SidebarItem
                         icon={HistoryIcon}

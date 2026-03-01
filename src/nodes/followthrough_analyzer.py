@@ -15,6 +15,7 @@ from langfuse import observe
 from ..logger import get_logger
 from ..notification.alerts import notify_trade_event
 from ..utils.model_manager import get_llm
+from ..utils.l0_preprocessor import calculate_atr
 from ..state import TradingState
 from ..database.persistence_manager import get_persistence_manager
 
@@ -95,13 +96,13 @@ def analyze_followthrough(state: TradingState) -> dict:
         Updated state
     """
     if state.get("status") != "managing_position":
-        return state
+        return {}
     
     entry_bar_index = state.get("entry_bar_index")
     current_bar_index = state.get("current_bar_index")
     
     if entry_bar_index is None or current_bar_index is None:
-        return state
+        return {}
     
     # Calculate number of bars since entry
     bars_since_entry = current_bar_index - entry_bar_index
@@ -109,11 +110,11 @@ def analyze_followthrough(state: TradingState) -> dict:
     # Brooks: Only check follow-through on the 1-2 bars after entry
     if bars_since_entry > 2:
         logger.debug("Beyond follow-through window (>2 bars). Skipping analysis.")
-        return state
+        return {}
     
     if bars_since_entry < 1:
         logger.debug("Still on entry bar. Waiting for next bar.")
-        return state
+        return {}
     
     logger.info(f"📊 Analyzing Follow-through: Bar {bars_since_entry} after entry")
     
@@ -169,7 +170,8 @@ def analyze_followthrough(state: TradingState) -> dict:
         logger.info("🔒 Weak follow-through. Tightening stop loss.")
         new_stop = calculate_tighter_stop(state)
         if new_stop:
-            updates["stop_loss"] = new_stop
+            updates["followthrough_tighten_requested"] = True
+            updates["followthrough_tight_stop"] = new_stop
             updates["stop_tightened"] = True
 
     elif analysis["recommendation"] == "add_position":
@@ -193,7 +195,7 @@ def analyze_followthrough_simple(state: dict) -> dict:
         分析结果
     """
     bars = state.get("bars", [])
-    if len(bars) < 2:
+    if len(bars) < 1:
         return {
             "follow_through_quality": "unknown",
             "recommendation": "hold",
@@ -330,18 +332,28 @@ def calculate_tighter_stop(state: dict) -> float | None:
         return None
     
     side = position.get("side")
-    entry_price = position.get("entry_price")
     current_stop = state.get("stop_loss")
-    
+    bars = state.get("bars", [])
+    atr = calculate_atr(bars) if bars else 0.0
+    min_atr_mult = float(os.getenv("FOLLOWTHROUGH_TIGHTEN_MIN_ATR_MULTIPLIER", "1.0"))
+    current_close = current_bar.get("close")
+
     if side == "long":
         # 收紧到当前 K 线低点
         new_stop = current_bar.get("low")
-        if new_stop and new_stop > current_stop:
+        if atr > 0 and current_close:
+            # Keep stop at least N*ATR away from current price to avoid noise exits.
+            floor_stop = current_close - atr * min_atr_mult
+            new_stop = min(new_stop, floor_stop) if new_stop else floor_stop
+        if new_stop and (current_stop is None or new_stop > current_stop):
             return new_stop
-    else:
+    elif side != "long":
         # 收紧到当前 K 线高点
         new_stop = current_bar.get("high")
-        if new_stop and new_stop < current_stop:
+        if atr > 0 and current_close:
+            ceil_stop = current_close + atr * min_atr_mult
+            new_stop = max(new_stop, ceil_stop) if new_stop else ceil_stop
+        if new_stop and (current_stop is None or new_stop < current_stop):
             return new_stop
     
     return None

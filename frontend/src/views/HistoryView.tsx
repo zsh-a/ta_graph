@@ -1,10 +1,15 @@
 import React, { useEffect, useState } from 'react';
 import { useStore } from '../store';
+import { buildApiUrl } from '../lib/api';
 import { History, Calendar, ChevronRight, Activity, Brain, Shield, Zap, ArrowUpRight, ArrowDownRight } from 'lucide-react';
 import { TimelineRenderer } from '../components/EventCards';
 
 export const HistoryView: React.FC = () => {
-    const { historyRuns, currentRunDetails, historyLoading, fetchHistoryRuns, fetchRunDetails } = useStore();
+    const historyRuns = useStore((state) => state.historyRuns);
+    const currentRunDetails = useStore((state) => state.currentRunDetails);
+    const historyLoading = useStore((state) => state.historyLoading);
+    const fetchHistoryRuns = useStore((state) => state.fetchHistoryRuns);
+    const fetchRunDetails = useStore((state) => state.fetchRunDetails);
     const [activeTab, setActiveTab] = useState<'workflows' | 'orders'>('workflows');
     const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
     const [dateRange, setDateRange] = useState({
@@ -45,8 +50,7 @@ export const HistoryView: React.FC = () => {
                 limit: '100',
                 source: dataSource
             });
-            const url = `http://127.0.0.1:8000/history/orders?${query}`;
-            const response = await fetch(url);
+            const response = await fetch(buildApiUrl('/history/orders', query));
             const data = await response.json();
             setOrderHistory(data);
         } catch (e) {
@@ -386,4 +390,3 @@ const WorkflowHistory = ({
         </div>
     );
 };
-

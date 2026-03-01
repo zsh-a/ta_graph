@@ -2,14 +2,11 @@ import React from 'react';
 import { AppLayout } from './AppLayout';
 import { useWebSocket } from './hooks/useWebSocket';
 import { useStore } from './store';
+import { getWsUrl } from './lib/api';
 import { AlertTriangle, Radiation } from 'lucide-react';
 
 // View Components
 import { CockpitView } from './views/CockpitView';
-import { ChartsView } from './views/ChartsView';
-import { ReasoningView } from './views/ReasoningView';
-import { PortfolioView } from './views/PortfolioView';
-import { SafetyView } from './views/SafetyView';
 import { HistoryView } from './views/HistoryView';
 
 /**
@@ -18,15 +15,11 @@ import { HistoryView } from './views/HistoryView';
  */
 const VIEW_MAP: Record<string, React.FC> = {
   cockpit: CockpitView,
-  charts: ChartsView,
-  reasoning: ReasoningView,
-  portfolio: PortfolioView,
-  safety: SafetyView,
   history: HistoryView,
 };
 
 function App() {
-  const wsUrl = import.meta.env.VITE_WS_URL || 'ws://127.0.0.1:8000/ws';
+  const wsUrl = getWsUrl();
   const { sendCommand } = useWebSocket(wsUrl);
   const currentView = useStore((state) => state.currentView);
 

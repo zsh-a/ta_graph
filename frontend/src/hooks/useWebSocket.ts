@@ -3,15 +3,14 @@ import { useStore } from '../store';
 
 export const useWebSocket = (url: string) => {
     const socketRef = useRef<WebSocket | null>(null);
-    const {
-        updateFromInitialState,
-        setSystemStatus,
-        processEvent
-    } = useStore();
+    const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const reconnectAttemptRef = useRef(0);
+    const updateFromInitialState = useStore((state) => state.updateFromInitialState);
+    const setSystemStatus = useStore((state) => state.setSystemStatus);
+    const processEvent = useStore((state) => state.processEvent);
 
     useEffect(() => {
         let isMounted = true;
-        let reconnectTimeout: ReturnType<typeof setTimeout>;
 
         const connect = () => {
             if (!isMounted) return;
@@ -24,13 +23,20 @@ export const useWebSocket = (url: string) => {
                     socket.close();
                     return;
                 }
+                reconnectAttemptRef.current = 0;
                 console.log('Connected to Dashboard WS');
                 setSystemStatus('online');
             };
 
             socket.onmessage = (event) => {
                 if (!isMounted) return;
-                const message = JSON.parse(event.data);
+                let message: any;
+                try {
+                    message = JSON.parse(event.data);
+                } catch (parseError) {
+                    console.error('Invalid WS payload:', parseError);
+                    return;
+                }
 
                 if (message.type === 'initial_state') {
                     updateFromInitialState(message.data);
@@ -43,8 +49,11 @@ export const useWebSocket = (url: string) => {
                 if (isMounted) {
                     console.log('Disconnected from Dashboard WS');
                     setSystemStatus('offline');
-                    // Reconnect after 3 seconds
-                    reconnectTimeout = setTimeout(connect, 3000);
+                    reconnectAttemptRef.current += 1;
+                    const baseDelay = Math.min(30000, 1000 * (2 ** reconnectAttemptRef.current));
+                    const jitter = Math.floor(Math.random() * 500);
+                    const retryDelay = baseDelay + jitter;
+                    reconnectTimerRef.current = setTimeout(connect, retryDelay);
                 }
             };
 
@@ -58,7 +67,10 @@ export const useWebSocket = (url: string) => {
 
         return () => {
             isMounted = false;
-            clearTimeout(reconnectTimeout);
+            if (reconnectTimerRef.current) {
+                clearTimeout(reconnectTimerRef.current);
+                reconnectTimerRef.current = null;
+            }
             if (socketRef.current) {
                 socketRef.current.close();
             }
@@ -68,6 +80,8 @@ export const useWebSocket = (url: string) => {
     const sendCommand = (type: string, data: any) => {
         if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
             socketRef.current.send(JSON.stringify({ type, data }));
+        } else {
+            console.warn(`WS not connected. Command skipped: ${type}`);
         }
     };
 

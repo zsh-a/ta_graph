@@ -7,7 +7,7 @@ export const PriceChart = () => {
     const chartContainerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
     const lineSeriesRef = useRef<ISeriesApi<"Area"> | null>(null);
-    const { prices } = useStore();
+    const prices = useStore((state) => state.prices);
 
     useEffect(() => {
         if (!chartContainerRef.current) return;

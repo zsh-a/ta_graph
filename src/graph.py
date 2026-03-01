@@ -4,8 +4,7 @@ Integrates all optimization components into the trading workflow.
 
 Tiered Architecture:
 - L0: Python preprocessing (dead market filter)
-- L1: Low-cost text model screening (qwen-turbo)
-- L2: High-cost vision model analysis (qwen-vl-max) - only when L1 detects setup
+- L2: High-cost vision model analysis (qwen-vl-max)
 """
 
 from typing import Optional
@@ -16,7 +15,6 @@ import os
 
 from .state import TradingState
 from .nodes.market_data import fetch_market_data
-from .nodes.l1_screener import l1_screen
 from .nodes.brooks_analyzer import brooks_analyzer
 from .nodes.strategy_enhanced import generate_strategy
 from .nodes.risk import assess_risk
@@ -38,9 +36,9 @@ def get_analysis_subgraph() -> CompiledGraph:
     
     架构：漏斗式筛选（Tiered Funnel）
     
-    market_data → [L0 gate] → l1_screener → [L1→L2 router] → brooks_analyzer → strategy → risk → execution
-                     ↓                              ↓
-                   (dead market: END)        (no setup: skip to strategy)
+    market_data → [L0 gate] → brooks_analyzer → strategy → risk → execution
+                     ↓
+                   (dead market: END)
     
     Returns:
         编译好的 Analysis Graph
@@ -54,7 +52,6 @@ def get_analysis_subgraph() -> CompiledGraph:
         
         # Add nodes
         workflow.add_node("market_data", fetch_market_data)
-        workflow.add_node("l1_screener", l1_screen)  # NEW: L1 text model screening
         workflow.add_node("brooks_analyzer", brooks_analyzer)  # L2 visual model
         workflow.add_node("strategy", generate_strategy)
         workflow.add_node("risk", assess_risk)
@@ -93,23 +90,6 @@ def get_analysis_subgraph() -> CompiledGraph:
             })
             return "continue"
         
-        def l1_to_l2_router(state: TradingState) -> str:
-            """
-            L1 → L2 Router: Only invoke expensive VL model if L1 detects setup
-            
-            This saves ~80% of API costs by skipping visual analysis when no setup exists.
-            """
-            setup_detected = state.get("l1_setup_detected", False)
-            confidence = state.get("l1_confidence", "low")
-            
-            # Only escalate to L2 if confident setup is detected
-            if setup_detected and confidence in ["high", "medium"]:
-                logger.info(f"📈 L1→L2: Setup detected ({state.get('l1_setup_type')}), escalating to visual analysis")
-                return "visual_analysis"
-            else:
-                logger.info("📊 L1→Strategy: No clear setup, skipping visual analysis")
-                return "skip_visual"
-        
         # ========== Define Flow with Conditional Edges ==========
         
         workflow.set_entry_point("market_data")
@@ -119,21 +99,11 @@ def get_analysis_subgraph() -> CompiledGraph:
             "market_data",
             l0_gate,
             {
-                "continue": "l1_screener",
+                "continue": "brooks_analyzer",
                 "dead_market": END  # Skip everything for dead markets
             }
         )
-        
-        # L1 → L2 Router
-        workflow.add_conditional_edges(
-            "l1_screener",
-            l1_to_l2_router,
-            {
-                "visual_analysis": "brooks_analyzer",
-                "skip_visual": "strategy"  # Skip expensive VL model
-            }
-        )
-        
+
         # Standard edges
         workflow.add_edge("brooks_analyzer", "strategy")
         workflow.add_edge("strategy", "risk")
@@ -143,7 +113,7 @@ def get_analysis_subgraph() -> CompiledGraph:
         # Compile without checkpointer - parent graph handles persistence
         _analysis_subgraph = workflow.compile()
         
-        logger.info("✓ Analysis Subgraph created with tiered routing (L0→L1→L2)")
+        logger.info("✓ Analysis Subgraph created with routing (L0→L2)")
     
     return _analysis_subgraph
 

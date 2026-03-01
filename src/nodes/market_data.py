@@ -285,7 +285,7 @@ def fetch_market_data(state: TradingState) -> dict:
         # Check for dead market (low volatility) - requires list of bar dicts
         dead_market = is_dead_market(bars)
         
-        # Generate Brooks notation for L1 text model
+        # Generate Brooks notation for downstream analysis
         ema_list = df['ema20'].tolist() if 'ema20' in df.columns else None
         brooks_notation = encode_bars_to_text(bars[-10:], ema_values=ema_list[-10:] if ema_list else None)
         
@@ -299,7 +299,7 @@ def fetch_market_data(state: TradingState) -> dict:
         emit_node_event("l0_preprocessing_complete", "market_data", {
             "is_dead_market": dead_market,
             "atr_pct": market_ctx.atr_pct if market_ctx else None,
-            "next_step": "END" if dead_market else "l1_screener"
+            "next_step": "END" if dead_market else "brooks_analyzer"
         })
     except Exception as e:
         logger.warning(f"⚠️  L0 preprocessing failed: {e}")
@@ -320,4 +320,3 @@ def fetch_market_data(state: TradingState) -> dict:
         "brooks_notation": brooks_notation,
         "market_context": market_ctx.to_dict() if market_ctx else None
     }
-

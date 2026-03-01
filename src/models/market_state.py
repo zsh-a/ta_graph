@@ -1,58 +1,12 @@
 """
 Market State and Trading Plan - Pydantic Models
 
-市场状态快照和交易计划的结构化定义。
-用于 L1 文本模型的增量更新和 Python 执行引擎。
+交易计划的结构化定义。
+用于 Python 执行引擎。
 """
 
 from typing import Literal, Any
 from pydantic import BaseModel, Field
-
-
-# ==================== Market State (L1 维护) ====================
-
-class MarketStateSnapshot(BaseModel):
-    """
-    市场状态快照 - 由 L1 模型在每根 K 线收盘时更新
-    
-    设计原则：
-    - 只存储"状态"而非"数据"
-    - 下一时刻只需输入"上一状态 + 新K线特征"
-    """
-    timestamp: str = Field(description="ISO 格式时间戳")
-    
-    # Al Brooks 核心概念
-    always_in_direction: Literal["long", "short", "unclear"] = Field(
-        default="unclear",
-        description="Always In 方向：当前市场主导力量"
-    )
-    market_phase: Literal[
-        "strong_bull_trend", "weak_bull_trend", 
-        "strong_bear_trend", "weak_bear_trend",
-        "trading_range", "breakout", "climax"
-    ] = Field(
-        default="trading_range",
-        description="市场阶段"
-    )
-    
-    # 形态观察
-    recent_pattern: str | None = Field(
-        default=None,
-        description="正在形成的形态，如 'Wedge Top forming', 'H2 setup'"
-    )
-    
-    # 关键价位
-    key_levels: dict[str, float] = Field(
-        default_factory=dict,
-        description="关键价位，如 {'support': 100.5, 'resistance': 105.0}"
-    )
-    
-    # L1 模型的推理记录
-    notes: str = Field(
-        default="",
-        description="重要观察和推理过程"
-    )
-
 
 # ==================== Trading Plan Protocol ====================
 
@@ -135,33 +89,3 @@ class TradingPlan(BaseModel):
             "take_profit": self.risk_management.hard_tp,
             "expiration_bars": self.entry.expiration_bars
         }
-
-
-# ==================== L1 Screener Response ====================
-
-class L1ScreenerResponse(BaseModel):
-    """L1 文本模型的结构化输出"""
-    
-    updated_state: MarketStateSnapshot = Field(
-        description="更新后的市场状态"
-    )
-    setup_detected: bool = Field(
-        default=False,
-        description="是否检测到潜在的 setup"
-    )
-    setup_type: str | None = Field(
-        default=None,
-        description="Setup 类型，如 'H2_buy', 'Wedge_bottom'"
-    )
-    reasoning: str = Field(
-        default="",
-        description="推理过程说明"
-    )
-    confidence: Literal["high", "medium", "low"] = Field(
-        default="low",
-        description="置信度"
-    )
-    
-    def should_escalate_to_l2(self) -> bool:
-        """是否应该升级到 L2 视觉模型"""
-        return self.setup_detected and self.confidence in ["high", "medium"]

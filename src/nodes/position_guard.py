@@ -11,6 +11,7 @@ Implements Brooks' trailing stop modes based on the TradingPlan:
 from typing import Any
 from dataclasses import dataclass
 from enum import Enum
+import os
 from langfuse import observe
 
 from ..trading.exchange_client import get_client, normalize_symbol
@@ -18,6 +19,7 @@ from ..logger import get_logger
 from ..notification.alerts import notify_trade_event
 from ..state import TradingState
 from ..utils.l0_preprocessor import calculate_atr
+from .followthrough_analyzer import analyze_followthrough
 
 logger = get_logger(__name__)
 
@@ -42,7 +44,7 @@ class StopUpdate:
 def calculate_trail_stop(
     state: TradingState,
     mode: TrailStopMode | str,
-    atr_multiplier: float = 0.5
+    atr_multiplier: float = 1.0
 ) -> StopUpdate:
     """
     Calculate new trailing stop based on mode.
@@ -64,18 +66,19 @@ def calculate_trail_stop(
     current_stop = position.get("stop_loss") or state.get("stop_loss")
     bars = state.get("bars", [])
     
-    if not bars or len(bars) < 2:
-        return StopUpdate(None, "Insufficient bar data", TrailStopMode.NONE)
-    
     # Normalize mode to enum
     if isinstance(mode, str):
         try:
             mode = TrailStopMode(mode)
         except ValueError:
             mode = TrailStopMode.NONE
+
+    # Breakeven does not require bar history.
+    if mode != TrailStopMode.BREAKEVEN and (not bars or len(bars) < 2):
+        return StopUpdate(None, "Insufficient bar data", TrailStopMode.NONE)
     
-    current_bar = bars[-1]
-    prior_bar = bars[-2]
+    current_bar = bars[-1] if bars else {}
+    prior_bar = bars[-2] if len(bars) >= 2 else {}
     is_long = side.lower() in ("long", "buy")
     
     new_stop: float | None = None
@@ -279,9 +282,44 @@ def guard_position(state: TradingState) -> dict[str, Any]:
     if not position:
         logger.warning("No position found in state")
         return {}
+
+    # Run follow-through analysis in the same node, so guard_position is the
+    # single execution point for stop/exit actions.
+    followthrough_updates = analyze_followthrough(state)
+    effective_state: TradingState = {**state, **followthrough_updates}
+
+    position = effective_state.get("position") or position
+    side = str(position.get("side", "long")).lower()
+    stop_loss = effective_state.get("stop_loss") or position.get("stop_loss")
+    current_bar = effective_state.get("current_bar") or (effective_state.get("bars", [{}])[-1] if effective_state.get("bars") else {})
+    current_low = current_bar.get("low")
+    current_high = current_bar.get("high")
+
+    # Unified exit handling: explicit exit signal or hard stop touched.
+    stop_hit = bool(
+        stop_loss is not None and (
+            (side in ("long", "buy") and current_low is not None and float(current_low) <= float(stop_loss))
+            or (side not in ("long", "buy") and current_high is not None and float(current_high) >= float(stop_loss))
+        )
+    )
+    if effective_state.get("should_exit") or stop_hit:
+        reason = effective_state.get("exit_reason") or ("stop_loss_hit" if stop_hit else "guard_exit")
+        logger.warning(f"🚪 Exiting position. reason={reason}")
+        if _close_position_market(effective_state):
+            return {
+                **followthrough_updates,
+                "status": "looking_for_trade",
+                "position": None,
+                "pending_order_id": None,
+                "stop_loss": None,
+                "take_profit": None,
+                "should_exit": False,
+                "exit_reason": str(reason),
+            }
+        return {**followthrough_updates, "error": f"Failed to close position for reason={reason}"}
     
     # Determine trail stop mode
-    trading_plan = state.get("trading_plan")
+    trading_plan = effective_state.get("trading_plan")
     trail_mode = TrailStopMode.NONE
     
     if trading_plan:
@@ -296,14 +334,36 @@ def guard_position(state: TradingState) -> dict[str, Any]:
             trail_mode = TrailStopMode.BELOW_PRIOR_BAR
     else:
         # Default behavior: check for breakeven first, then trail by prior bar
-        if should_move_to_breakeven(state):
+        if should_move_to_breakeven(effective_state):
             trail_mode = TrailStopMode.BREAKEVEN
             logger.info("✅ Position at 1R profit - moving to breakeven")
         else:
             trail_mode = TrailStopMode.BELOW_PRIOR_BAR
     
-    # Calculate new stop
-    stop_update = calculate_trail_stop(state, trail_mode)
+    # Calculate default trailing stop candidate
+    atr_multiplier = float(os.getenv("TRAIL_TIGHT_ATR_MULTIPLIER", "1.0"))
+    stop_update = calculate_trail_stop(effective_state, trail_mode, atr_multiplier=atr_multiplier)
+
+    # Follow-through analysis can request a tighter stop; keep single writer here.
+    requested_tight_stop = effective_state.get("followthrough_tight_stop")
+    if isinstance(requested_tight_stop, (int, float)):
+        requested_val = float(requested_tight_stop)
+        current_stop = position.get("stop_loss") or state.get("stop_loss")
+        is_better = (
+            current_stop is None
+            or (side in ("long", "buy") and requested_val > float(current_stop))
+            or (side not in ("long", "buy") and requested_val < float(current_stop))
+        )
+        if is_better and (stop_update.new_stop is None or (
+            side in ("long", "buy") and requested_val > stop_update.new_stop
+        ) or (
+            side not in ("long", "buy") and requested_val < stop_update.new_stop
+        )):
+            stop_update = StopUpdate(
+                new_stop=requested_val,
+                reason="Follow-through tighten stop",
+                mode_used=TrailStopMode.TIGHT,
+            )
     
     if stop_update.new_stop:
         logger.info(f"📍 Stop update: {stop_update.reason} (mode: {stop_update.mode_used})")
@@ -323,13 +383,16 @@ def guard_position(state: TradingState) -> dict[str, Any]:
         )
         
         return {
+            **followthrough_updates,
             "position": updated_position,
             "stop_loss": stop_update.new_stop,
-            "stop_update_reason": stop_update.reason
+            "stop_update_reason": stop_update.reason,
+            "followthrough_tighten_requested": False,
+            "followthrough_tight_stop": None,
         }
     else:
         logger.debug(f"No stop update: {stop_update.reason}")
-        return {}
+        return followthrough_updates
 
 
 def _update_stop_on_exchange(state: TradingState, new_stop: float) -> bool:
@@ -339,7 +402,6 @@ def _update_stop_on_exchange(state: TradingState, new_stop: float) -> bool:
     Returns:
         True if successful, False otherwise
     """
-    import os
     trading_mode = os.getenv("TRADING_MODE", "dry-run").lower()
 
     if trading_mode != "live":
@@ -393,6 +455,42 @@ def _update_stop_on_exchange(state: TradingState, new_stop: float) -> bool:
         return False
 
 
+def _close_position_market(state: TradingState) -> bool:
+    trading_mode = os.getenv("TRADING_MODE", "dry-run").lower()
+    if trading_mode != "live":
+        logger.info("Dry-run mode: simulated close position")
+        return True
+
+    try:
+        symbol = state.get("symbol")
+        position = state.get("position", {})
+        if not symbol or not position:
+            return False
+
+        exchange_name = os.getenv("EXCHANGE_NAME", "bitget")
+        client = get_client(exchange_name)
+        trading_symbol = normalize_symbol(symbol, exchange_name)
+
+        side = str(position.get("side", "long")).lower()
+        size = position.get("size")
+        if not size:
+            return False
+
+        close_side = "sell" if side in ("long", "buy") else "buy"
+        order = client.place_order(
+            symbol=trading_symbol,
+            side=close_side,
+            order_type="market",
+            amount=float(size),
+            reduce_only=True,
+        )
+        logger.info(f"✅ Position closed at market: {order.id}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to close position: {e}")
+        return False
+
+
 def check_volatility_interrupt(state: TradingState, atr_threshold_multiplier: float = 2.0) -> bool:
     """
     Check if market volatility requires immediate attention.
@@ -430,8 +528,6 @@ def calculate_measured_move_target(bars: list[dict], side: str) -> float | None:
 
     Brooks principle: Leg 1 = Leg 2.
     Finds the most recent swing high/low and projects the same distance.
-
-    Migrated from risk_manager.py.
 
     Args:
         bars: OHLC bar data

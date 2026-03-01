@@ -3,7 +3,7 @@ import { useStore } from '../store';
 import { Target, Shield, ArrowUpRight, ArrowDownRight, Activity } from 'lucide-react';
 
 export const PositionDisplay: React.FC = () => {
-    const { trading } = useStore();
+    const trading = useStore((state) => state.trading);
     const position = trading.current_position;
 
     if (!position) {

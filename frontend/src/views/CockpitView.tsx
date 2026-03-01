@@ -23,7 +23,7 @@ export const CockpitView: React.FC = () => {
                         </div>
                     </div>
                 </div>
-                <div className="w-96 flex flex-col gap-2 h-full">
+                <div className="w-[26rem] flex flex-col gap-2 h-full">
                     <PositionDisplay />
                     <div className="flex-1 min-h-0">
                         <AIBrainTerminal />

@@ -41,7 +41,7 @@ class TradingState(TypedDict, total=False):
 
     bars: list[dict[str, object]]            # Set by: market_data | Read by: brooks_analyzer, strategy, position_guard, risk, followthrough
     current_bar: dict[str, object] | None    # Set by: market_data | Read by: order_monitor, position_guard, followthrough
-    current_bar_index: int                   # Set by: market_data | Read by: order_monitor, followthrough, second_entry
+    current_bar_index: int                   # Set by: market_data | Read by: order_monitor, followthrough
     current_price: float                     # Set by: market_data | Read by: position_guard, risk
 
     market_states: list[dict[str, object]]   # Set by: market_data | Read by: strategy, risk
@@ -52,20 +52,12 @@ class TradingState(TypedDict, total=False):
     focus_chart_image_path: str # Set by: market_data      | Read by: brooks_analyzer
 
     # ── 3. Analysis Pipeline ────────────────────────────────────
-    # Multi-tier funnel: L0 (Python) → L1 (text LLM) → L2 (vision LLM) → Strategy
+    # Pipeline: L0 (Python) → L2 (vision LLM) → Strategy
 
     # L0: Python Preprocessing (set by: market_data node)
-    is_dead_market: bool                  # Read by: supervisor_router (gate to skip L1+)
-    brooks_notation: str                  # Read by: l1_screener
-    market_context: dict[str, object]     # Read by: l1_screener
-
-    # L1: Text Model Screening (set by: l1_screener)
-    l1_analysis: dict[str, object]        # Read by: brooks_analyzer (L2 confirmation)
-    l1_market_state: dict[str, object]    # Read by: brooks_analyzer, l1_screener (prev state)
-    l1_setup_detected: bool               # Read by: supervisor_router
-    l1_setup_type: str | None             # Read by: brooks_analyzer
-    l1_reasoning: str                     # Read by: brooks_analyzer
-    l1_confidence: str                    # Read by: supervisor_router
+    is_dead_market: bool                  # Read by: graph l0 gate
+    brooks_notation: str                  # Read by: brooks_analyzer
+    market_context: dict[str, object]     # Read by: brooks_analyzer
 
     # L2: Vision Model (set by: brooks_analyzer)
     brooks_analysis: dict[str, object]    # Read by: strategy_enhanced, risk
@@ -106,10 +98,12 @@ class TradingState(TypedDict, total=False):
                                  # Values: 'scan', 'manage', 'cooldown', 'halt'
 
     # Exit signals
-    should_exit: bool            # Set by: followthrough     | Read by: position_guard
-    exit_reason: str             # Set by: followthrough     | Read by: supervisor
-    stop_loss: float             # Set by: position_guard, followthrough | Read by: position_guard
+    should_exit: bool            # Set by: position_guard(followthrough analysis) | Read by: position_guard
+    exit_reason: str             # Set by: position_guard(followthrough analysis) | Read by: supervisor
+    stop_loss: float             # Set by: position_guard    | Read by: position_guard
     stop_loss_order_id: str      # Set by: position_guard    | Read by: position_guard
+    followthrough_tighten_requested: bool  # Set by: position_guard(followthrough analysis) | Read by: position_guard
+    followthrough_tight_stop: float        # Set by: position_guard(followthrough analysis) | Read by: position_guard
 
     # Error tracking
     error: str                   # Set by: any node          | Read by: supervisor

@@ -37,7 +37,7 @@ class TestAnalyzeFollowthrough:
         """Should skip if not managing position"""
         state = {"status": "looking_for_trade"}
         result = analyze_followthrough(state)
-        assert result == state
+        assert result == {}
     
     def test_skip_if_too_many_bars(self, long_position_state):
         """Should skip if more than 2 bars after entry"""
@@ -46,7 +46,7 @@ class TestAnalyzeFollowthrough:
         result = analyze_followthrough(long_position_state)
         
         # Should skip analysis
-        assert result == long_position_state
+        assert result == {}
     
     def test_strong_followthrough_long(self, long_position_state):
         """Should detect strong follow-through for long position"""

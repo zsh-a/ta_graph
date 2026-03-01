@@ -15,7 +15,8 @@ const StatCard = ({ label, value, subValue, icon: Icon, colorClass }: any) => (
 );
 
 export const StatsDashboard = () => {
-    const { trading, safety } = useStore();
+    const trading = useStore((state) => state.trading);
+    const safety = useStore((state) => state.safety);
     const pnl = trading.total_pnl || 0;
     const isPositive = pnl >= 0;
 

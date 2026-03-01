@@ -5,17 +5,15 @@
 使用统一的TradingState，支持作为subgraph直接添加到supervisor graph
 """
 
-from typing import Literal, Optional
+from typing import Optional
 from langgraph.graph import StateGraph, END
 from langgraph.graph.state import CompiledStateGraph
-from datetime import datetime
 
 from .state import TradingState
 from .nodes.order_monitor import monitor_pending_order
 from .nodes.position_sync import sync_position_state, check_position_health
 from .nodes.position_guard import guard_position  # Position Guard with trail stops
-from .nodes.followthrough_analyzer import analyze_followthrough
-from .safety import get_equity_protector, ConvictionTracker, check_hallucination_guard
+from .safety import get_equity_protector, ConvictionTracker
 from .logger import get_logger
 
 logger = get_logger(__name__)
@@ -72,13 +70,9 @@ def create_position_management_workflow() -> StateGraph:
     workflow.add_node("check_health", check_position_health)
 
     # 3. Position Guard - Automated trail stop management
-    #    (Absorbs risk_manager's breakeven + trailing stop logic)
     workflow.add_node("guard_position", guard_position)
 
-    # 4. Follow-through 分析
-    workflow.add_node("analyze_followthrough", analyze_followthrough)
-
-    # 5. 安全检查
+    # 4. 安全检查
     workflow.add_node("safety_check", perform_safety_check)
     
     # ========== 条件边：状态路由 ==========
@@ -128,11 +122,9 @@ def create_position_management_workflow() -> StateGraph:
     )
 
     # Position management flow
-    # guard_position now handles breakeven + trailing stops (previously in risk_manager)
     workflow.add_edge("sync_position", "check_health")
     workflow.add_edge("check_health", "guard_position")
-    workflow.add_edge("guard_position", "analyze_followthrough")
-    workflow.add_edge("analyze_followthrough", END)
+    workflow.add_edge("guard_position", END)
     
     return workflow
 

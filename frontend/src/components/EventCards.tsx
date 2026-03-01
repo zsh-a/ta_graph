@@ -261,41 +261,15 @@ export const L0GateCard = ({ data }: { data: any }) => (
 );
 
 export const LLMOutputCard = ({ data }: { data: any }) => {
-    const [expanded, setExpanded] = React.useState(false);
-
     return (
         <div className="mt-2 ml-5 p-2 bg-zinc-800/10 border border-zinc-700/50 rounded-md text-[10px] font-mono overflow-hidden">
-            <div className="flex justify-between items-center cursor-pointer select-none" onClick={() => setExpanded(!expanded)}>
-                <span className="text-zinc-400 font-bold">LLM Interaction ({data.model})</span>
-                <span className="text-zinc-500 text-[9px] hover:text-zinc-300 transition-colors">{expanded ? '▲ Hide' : '▼ Show'}</span>
+            <div className="flex justify-between items-center">
+                <span className="text-zinc-300 font-bold">LLM Summary</span>
+                <span className="text-zinc-500 text-[9px]">{data.model || 'unknown model'}</span>
             </div>
-            {!expanded && data.reasoning && (
-                <div className="mt-1 text-zinc-500 line-clamp-2 italic border-l-2 border-zinc-700/50 pl-2">
-                    {data.reasoning.substring(0, 100)}...
-                </div>
-            )}
-            {expanded && (
-                <div className="mt-2 space-y-2 border-t border-zinc-700/50 pt-2 animate-in fade-in slide-in-from-top-1 duration-200">
-                    <div>
-                        <span className="text-zinc-500 uppercase text-[8px] block mb-1">User Prompt</span>
-                        <div className="bg-black/30 p-2 rounded text-zinc-300 whitespace-pre-wrap max-h-[200px] overflow-y-auto border border-zinc-800/50">
-                            {data.prompt}
-                        </div>
-                    </div>
-                    <div>
-                        <span className="text-zinc-500 uppercase text-[8px] block mb-1">Response</span>
-                        <div className="bg-black/30 p-2 rounded text-green-400/80 whitespace-pre-wrap max-h-[300px] overflow-y-auto font-mono border border-zinc-800/50">
-                            {data.response}
-                        </div>
-                    </div>
-                    {data.reasoning && (
-                        <div>
-                            <span className="text-zinc-500 uppercase text-[8px] block mb-1">Reasoning</span>
-                            <div className="p-1 text-zinc-400 italic">{data.reasoning}</div>
-                        </div>
-                    )}
-                </div>
-            )}
+            <div className="mt-2 text-zinc-400 leading-relaxed">
+                {data.reasoning ? String(data.reasoning).slice(0, 220) : 'No concise reasoning provided.'}
+            </div>
         </div>
     );
 };
@@ -561,4 +535,3 @@ export const TimelineRenderer = ({ events, formatDate }: TimelineRendererProps) 
         </>
     );
 };
-

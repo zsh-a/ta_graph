@@ -185,7 +185,10 @@ const calculateNodePositions = (
 };
 
 export const GraphView: React.FC = () => {
-    const { graphData, graphLoading, fetchGraphStructure, activeNode } = useStore();
+    const graphData = useStore((state) => state.graphData);
+    const graphLoading = useStore((state) => state.graphLoading);
+    const fetchGraphStructure = useStore((state) => state.fetchGraphStructure);
+    const activeNode = useStore((state) => state.activeNode);
 
     const [nodes, setNodes, onNodesChange] = useNodesState([]);
     const [edges, setEdges, onEdgesChange] = useEdgesState([]);

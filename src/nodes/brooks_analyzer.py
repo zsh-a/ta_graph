@@ -38,8 +38,7 @@ from ..models.decisions import (
 def get_brooks_analysis_prompt(
     bar_data_table: str,
     include_htf: bool = False,
-    htf_summary: str = "",
-    l1_context: dict | None = None
+    htf_summary: str = ""
 ) -> str:
     """
     Generate prompt for Brooks analysis using VL model with strict CoT enforcement.
@@ -48,7 +47,6 @@ def get_brooks_analysis_prompt(
         bar_data_table: OHLC data in table format
         include_htf: Whether to include higher timeframe analysis
         htf_summary: Summary of HTF analysis
-        l1_context: Context from L1 text screener (setup_type, reasoning, confidence)
     """
     
     htf_section = ""
@@ -59,26 +57,8 @@ def get_brooks_analysis_prompt(
 RULE: If HTF is in a strong trend, bias trades in that direction. If HTF is ranging, expect chop.
 """
     
-    # L1 Screener Context (for L2 visual confirmation)
-    l1_section = ""
-    if l1_context and l1_context.get("setup_detected"):
-        l1_section = f"""
-## L1 Text Model Pre-Screening Result
-The L1 text model has already detected a potential setup based on bar patterns:
-- **Setup Type**: {l1_context.get('setup_type', 'Unknown')}
-- **Confidence**: {l1_context.get('confidence', 'medium')}
-- **Reasoning**: {l1_context.get('reasoning', 'No reasoning provided')}
-- **Market Phase**: {l1_context.get('market_phase', 'Unknown')}
-- **Always In Direction**: {l1_context.get('always_in_direction', 'unclear')}
-
-**YOUR TASK**: Visually CONFIRM or REJECT this L1 assessment.
-- If you see the same pattern in the chart, CONFIRM with your analysis.
-- If the chart tells a different story, OVERRIDE the L1 assessment.
-- Look for visual elements L1 cannot see: trend lines, channel boundaries, exact wick positions.
-"""
-    
     return f"""You are Al Brooks, the legendary price action trader. You see every tick, every wick, and every trap.
-{l1_section}{htf_section}
+{htf_section}
 ## OBJECTIVE
 Analyze the provided chart images (Context + Focus) and determine the strict "Market Cycle". Then, if and ONLY if a high-quality setup exists, provide a trade recommendation with precise risk parameters.
 
@@ -361,25 +341,10 @@ HTF Always In: {htf_analysis.get('always_in_direction', 'Unknown')}
 HTF Signal: {htf_analysis.get('signal', 'Unknown')}
 """
     
-    # Gather L1 context for visual confirmation
-    l1_context = None
-    if state.get("l1_setup_detected"):
-        l1_market_state = state.get("l1_market_state", {}) or {}
-        l1_context = {
-            "setup_detected": True,
-            "setup_type": state.get("l1_setup_type"),
-            "confidence": state.get("l1_confidence", "medium"),
-            "reasoning": state.get("l1_reasoning"),
-            "market_phase": l1_market_state.get("market_phase"),
-            "always_in_direction": l1_market_state.get("always_in_direction")
-        }
-        logger.info(f"📋 L2 Visual Confirmation: L1 detected {l1_context['setup_type']}")
-    
     prompt_text = get_brooks_analysis_prompt(
         bar_data_table=bar_data_table,
         include_htf=bool(htf_chart_path),
-        htf_summary=htf_summary,
-        l1_context=l1_context
+        htf_summary=htf_summary
     )
     
     bus.emit_sync("ai_thinking", {"node": "brooks_analyzer", "step": "analyzing_chart", "message": "Analyzing price action with Brooks methodology..."})

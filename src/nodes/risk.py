@@ -5,6 +5,12 @@ from ..state import TradingState
 from ..logger import get_logger
 from ..utils.event_bus import get_event_bus
 from ..utils.price_calculator import calculate_entry_price, calculate_stop_loss_price, calculate_take_profit_price
+from ..utils.risk_policy import (
+    RiskPolicy,
+    calculate_atr_from_ohlcv,
+    enforce_min_rr,
+    enforce_min_stop_distance,
+)
 from ..utils.error_handler import with_error_handling, DataError
 from ..utils.symbol import normalize_symbol
 
@@ -47,6 +53,7 @@ class RiskParameters:
         self.daily_loss_limit_percent = float(os.getenv("DAILY_LOSS_LIMIT_PERCENT", 2.0))
         # Default fallback risk if not specified in decision
         self.default_risk_percent = 1.0
+        self.policy = RiskPolicy.from_env()
 
 
 @observe()
@@ -142,6 +149,28 @@ def assess_risk(state: TradingState) -> dict[str, Any]:
             entry_price = calculate_entry_price(rules['entryPriceRule'], ohlcv, current_price, symbol)
             stop_loss = calculate_stop_loss_price(rules['stopLossPriceRule'], ohlcv, entry_price, is_buy, symbol)
             take_profit = calculate_take_profit_price(rules['takeProfitPriceRule'], ohlcv, entry_price, stop_loss)
+
+            # Centralized policy constraints: avoid tiny SL/TP distances.
+            atr = calculate_atr_from_ohlcv(ohlcv, period=config.policy.atr_period)
+            stop_loss, sl_adjusted, sl_reason = enforce_min_stop_distance(
+                entry_price=entry_price,
+                stop_loss=stop_loss,
+                is_buy=is_buy,
+                atr=atr,
+                policy=config.policy,
+            )
+            if sl_adjusted:
+                logger.info(f"📏 {symbol} {sl_reason}")
+
+            take_profit, tp_adjusted, tp_reason = enforce_min_rr(
+                entry_price=entry_price,
+                stop_loss=stop_loss,
+                take_profit=take_profit,
+                is_buy=is_buy,
+                policy=config.policy,
+            )
+            if tp_adjusted:
+                logger.info(f"🎯 {symbol} {tp_reason}")
             
             # Validation
             if is_buy and stop_loss >= entry_price:
