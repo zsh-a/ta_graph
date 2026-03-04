@@ -180,7 +180,8 @@ IMPORTANT: Respect the Brooks analysis. If it says "wait", you should strongly c
         market_states=market_states,
         account_info=account_info,
         recent_trades_summary=recent_trades_summary,
-        market_analysis_json=analysis_json
+        market_analysis_json=analysis_json,
+        position=state.get("position")
     )
     
     # ========== Call LLM ==========

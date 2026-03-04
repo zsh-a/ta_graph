@@ -54,11 +54,18 @@ LOGICAL CONSISTENCY (Required)
 - Entry trigger bar is the most recent bar that confirms the setup (typically bar -1 or 0). Avoid bars too far in the past.
 
 PRICE RULES (Summary)
-- Entry (Buy): bar_high at barIndex (-1 or 0 typical), offset 1 tick.
-- Entry (Sell): bar_low at barIndex (-1 or 0 typical), offset 1 tick.
+- Entry (Buy): bar_high at barIndex (-1 or 0 typical), offset 1 tick. orderType: "STOP" (MANDATORY for breakouts/trend continuation).
+- Entry (Sell): bar_low at barIndex (-1 or 0 typical), offset 1 tick. orderType: "STOP" (MANDATORY for breakouts/trend continuation). 
+- Entry (Fade/Range): orderType: "LIMIT" only when fading the extreme of a trading range. 
 - Stop (Buy): bar_low OR pattern_low (use impulse leg start/end) OR swing_low; include a small buffer (offset or offsetPercent).
 - Stop (Sell): bar_high OR pattern_high (use impulse leg start/end) OR swing_high; include a small buffer.
 - TP: measured_move (impulse start/end) or risk_multiple or key_level; first target should aim ≥ 1.5:1 RR when feasible.
+
+EXISTING POSITION RULES (Critical)
+- If you are currently in a position (e.g., OPEN POSITION exists in input):
+  - Prioritize "Hold" to let profits run, unless your structural Stop Loss or Take Profit is threatened, or a Major Trend Reversal (MTR) setup directly opposes your position.
+  - DO NOT flip the position (e.g., Hold a Buy -> Sell) based on minor pullbacks or weak setups.
+  - If closing an existing position to take profit or cut a loss manually, you can output a Decision in the opposite direction (e.g., Sell to close Long) with a "rationale" explaining why you are exiting early. Otherwise, output Hold.
 
 PREDICTION FIELDS
 - price_action_bias: bullish | bearish | neutral
@@ -80,7 +87,8 @@ def get_user_prompt_parts(
     account_info: Dict[str, Any],
     recent_trades_summary: str,
     rag_context: str = "",
-    market_analysis_json: str = ""
+    market_analysis_json: str = "",
+    position: Dict[str, Any] = None
 ) -> List[Any]:
     
     # 1. Construct Metadata Text
@@ -105,6 +113,7 @@ def get_user_prompt_parts(
 ## 3. Account & Open Orders
 Cash: ${available_cash:.2f}
 Open Orders: {open_orders_text}
+Current Open Position: {str(position) if position else "None"}
 
 {rag_context}
 """
@@ -200,23 +209,59 @@ Generate the decision JSON.
 def get_market_analysis_prompt(bar_data_table: str) -> str:
     """
     Prompt for the Analysis Node (VL Model).
-    Objectively scans the chart and bar data.
+    Objectively scans the chart and bar data, applying strict Exit & Stop rules.
     """
     return f"""
-Analyze the chart and data to extract objective market features.
-Output strictly in JSON format matching the schema.
+Trading Agent VLM Prompt Template: Price Action Stop-Loss and Exit Decision System
+
+[Role & Objective]
+You are a professional trading decision agent based on Al Brooks Price Action. Your task is to read the chart, identify the current market cycle (trend, trading range, reversal), evaluate the trade premise, and strictly follow the rules below to output decisions for **Initial Stop, Trailing Stop, and Proactive Exit (Take Profit/Stop Loss)**.
+
+[Core Principle]
+Both taking profit and stopping out are essentially "exiting." The ONLY criteria for exiting is: is the premise established at entry still valid?
+Keep it as simple as possible. Do not overcomplicate. Be disciplined and accept the actual risk.
+
+[Module 1: Trend Trailing Stop]
+When you identify that the market is in a clear trend, use the following rules to trail the stop:
+- Uptrend: Constantly look for **"Important Lows"**.
+  - Definition: If a low is followed by a strong breakout above the prior high (making a new high), that low becomes an "Important Low".
+  - Rule: Following every strong breakout to a new high, move the protective stop up to just below the most recent Important Low. DO NOT place stops below "minor lows" that did not lead to new highs, to avoid being stopped out by deep pullbacks.
+  - Exit Signal: When an Important Low is broken downwards, the premise of the uptrend is no longer valid (it may have shifted to a trading range or downtrend); bulls must exit.
+- Downtrend: Constantly look for **"Important Highs"**.
+  - Definition: If a high is followed by a strong breakdown below the prior low (making a new low), that high becomes an "Important High".
+  - Rule: Continuously trail the short stop down to just above the most recent Important High.
+  - Exit Signal: When an Important High is broken upwards, the downtrend is invalid; shorts must exit.
+
+[Module 2: Proactive Exit & Take Profit]
+When the following structures appear on the chart, do not wait for the initial stop to be hit. Execute a proactive, protective exit:
+- Measured Move Target: After a strong trend breakout, identify the Measured Move target. Set a limit order to take profit exactly at the target, or exit if a reversal bar appears at the target.
+- Climax & Gift Bar: When a trend has gone on for a long time (e.g., 30-40 bars) and suddenly an exceptionally large trend bar appears (buy climax / sell climax), this is often a trap or exhaustion signal. It will very likely be followed by a "Two-legged / Ten Bar (TBTL)" correction. Immediately take profit or trail the stop extremely tight (one tick behind the extreme of this climax bar).
+- Tick Failure & Wedges: If price comes within one tick of a target but fails to reach it and reverses, or if there are three consecutive pushes (wedge) touching a channel line, you must proactively exit to protect profits.
+- Risk-based Trailing Stop: Control the drawdown of profits. For example, if the initial risk was 2% of the account, the maximum drawdown of open profits should not exceed 2%. Trail the stop to ensure the drawdown doesn't exceed this fixed amount.
+
+[Module 3: Reversal & Trading Range Stops]
+Reversals and trading ranges have many false breakouts. Do not use rigid, tight extreme stops.
+- Ignore First Reversal Attempt: The first attempt to reverse a strong trend (V-bottom/top) has an 80% probability of failing. Ignore the first reversal; patiently wait for a second entry (e.g., micro double bottom/top, High 2 / Low 2, Major Trend Reversal) before entering and setting a stop.
+- Wide Stops for Wiggle Room: In broad channels or trading ranges, extremes are often slightly pierced before swiftly reversing. To avoid being shaken out, use these two wide stop methods:
+  - Money Stop: Place the stop a fixed distance outside the entry price or the extreme (e.g., widen by 5 to 20 ticks, or a fixed account percentage) to give the chart room to prove a false breakout.
+  - Price Action Stop: Double the stop distance of the preceding swing, or place it beyond the Measured Move distance of the false breakout bar's body.
+- Manual Exit on Confirmed Failure: When using wide stops, if price strongly closes beyond the extreme with a large body, and is followed by a confirmation bar, do not wait for the wide stop to be hit. Manually exit immediately.
+
+[Module 4: Breakeven Stops]
+- Action: After the position is in profit, move the initial stop to the entry price (or +/- 1 tick to cover fees) to ensure a risk-free trade.
+- Context: Because this method does not align with "Price Action" structural logic, it is easily swept during deep pullbacks. The VLM should ONLY trigger this strategy as a temporary defensive tool when facing a sudden, large opposing trend bar that causes confusion; or in swing trading, allowing the entry to be tested once, but exiting at breakeven if tested a second time.
+
+[VLM Decision Output Format]
+After analyzing the chart, output strictly in JSON schema format. Ensure the JSON output not only includes basic analysis fields (like market_cycle, always_in_direction, signal_bar, etc.) but MUST also populate the `exit_management` object:
+- Market_Context: Assess if it is a strong trend, broad channel, or trading range.
+- Trade_Premise: Define the premise of the trade (e.g., "The premise for long is that the recent important low holds").
+- Initial_Stop: Suggested initial stop placement and type (important high/low, wide stop, fixed money stop).
+- Trailing_Strategy: Conditions for updating the trailing stop (e.g., "Wait for the next strong breakout to a new high, then trail stop to xxx").
+- Proactive_Exit_Triggers: Triggers for proactive exit (Where is the estimated Measured Move target? What pattern demands an immediate full/partial exit?).
+- Actual_Risk_Assessment: Assess the deviation of actual risk from initial risk.
 
 ## Market Data
 {bar_data_table}
-
-## Instruction
-1. Assess the trend (BULLISH/BEARISH/SIDEWAYS).
-2. Identify market structure (trending, ranging, breakout, reversal).
-3. Identify key supports and resistances (price levels).
-4. Suggest a signal (BUY/SELL/HOLD) based on Al Brooks Price Action.
-   - BUY: Strong bull trend, bull breakout, or H1/H2 setup in a bull trend.
-   - SELL: Strong bear trend, bear breakout, or L1/L2 setup in a bear trend.
-   - HOLD: Confusion, tight trading range (doji forest), or weak signal bar.
 """
 
 # ==================== Dynamic Prompt Injection ====================

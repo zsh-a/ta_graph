@@ -103,6 +103,15 @@ class BrooksRiskAssessment(BaseModel):
     stop_loss_type: Literal["swing_low", "swing_high", "bar_extreme", "measured_move"]
     leverage_suggestion: int = Field(ge=1, le=20, default=5)
 
+class BrooksExitManagement(BaseModel):
+    """VLM Advanced Stop-Loss & Exit Decision Logic"""
+    Market_Context: str = Field(description="Trend, Channel, or Trading Range assessment")
+    Trade_Premise: str = Field(description="Definition of why the trade setup is valid")
+    Initial_Stop: str = Field(description="Suggested initial stop placement and type")
+    Trailing_Strategy: str = Field(description="Conditions for moving the stop loss")
+    Proactive_Exit_Triggers: str = Field(description="Measure Move targets, Climax warnings, etc.")
+    Actual_Risk_Assessment: str = Field(description="Assessment of actual risk vs initial risk")
+
 class BrooksAnalysis(BaseModel):
     """Complete Al Brooks price action analysis"""
     market_cycle: Literal[
@@ -121,6 +130,7 @@ class BrooksAnalysis(BaseModel):
     wait_reason: str | None = None
     setup_quality: int = Field(ge=0, le=10, description="Overall setup quality 0-10")
     risk_assessment: BrooksRiskAssessment | None = Field(default=None, description="Required if action is NOT wait")
+    exit_management: BrooksExitManagement | None = Field(default=None, description="VLM Stop & Exit strategy")
 
 class DecisionResponse(BaseModel):
     decisions: list[TradingDecision] = Field(min_length=1, max_length=1)

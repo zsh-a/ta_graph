@@ -552,10 +552,10 @@ class TradeFilter:
              if brooks_analysis and 'strong' in brooks_analysis.get('market_cycle', ''):
                  is_strong_trend = True
                  
-            #  if not is_strong_trend:
-            #      passed, reason = self.check_bar_close()
-            #      if not passed:
-            #          failed_reasons.append(f"[Timing] {reason}")
+             if not is_strong_trend:
+                 passed, reason = self.check_bar_close()
+                 if not passed:
+                     failed_reasons.append(f"[Timing] {reason}")
             
              # Filter 9: Barb Wire
              passed, reason = self.check_barb_wire(market_data)

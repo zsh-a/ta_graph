@@ -95,6 +95,7 @@ def execute_buy_order(
     symbol: str,
     amount: float,
     entry_price: float | None = None,
+    order_type: str = "limit",
     stop_loss: float | None = None,
     take_profit: float | None = None,
     leverage: int = 20
@@ -116,7 +117,6 @@ def execute_buy_order(
     """
     try:
         # Place order using unified client
-        order_type = "limit" if entry_price else "market"
         
         order = client.place_order(
             symbol=symbol,
@@ -150,6 +150,7 @@ def execute_sell_order(
     symbol: str,
     amount: float,
     entry_price: float | None = None,
+    order_type: str = "limit",
     stop_loss: float | None = None,
     take_profit: float | None = None,
     leverage: int = 20
@@ -158,8 +159,6 @@ def execute_sell_order(
     Execute a sell (SHORT) order using unified client
     """
     try:
-        order_type = "limit" if entry_price else "market"
-        
         order = client.place_order(
             symbol=symbol,
             side="sell",
@@ -317,6 +316,7 @@ def execute_trade(state: TradingState) -> dict:
         operation = plan.get("operation")
         symbol = plan.get("trading_symbol")  # e.g., BTC/USDT
         side = plan.get("side")  # LONG/SHORT
+        order_type = plan.get("order_type", "limit")
         amount = plan.get("amount")
         entry_price = plan.get("entry_price")
         stop_loss = plan.get("stop_loss")
@@ -334,13 +334,14 @@ def execute_trade(state: TradingState) -> dict:
         symbol_val: str = str(symbol)
         amount_val: float = float(amount)
         side_val: str = str(side)
+        type_val: str = str(order_type).lower() if order_type else "limit"
         entry_val: float | None = float(entry_price) if entry_price is not None else None
         sl_val: float | None = float(stop_loss) if stop_loss is not None else None
         tp_val: float | None = float(take_profit) if take_profit is not None else None
         lev_val: int = int(leverage)
         
         logger.info(f"\n{'='*60}")
-        logger.info(f"🎯 {side_val} {symbol_val}")
+        logger.info(f"🎯 {side_val} {symbol_val} ({type_val.upper()} ORDER)")
         logger.info(f"   Amount: {amount_val:.4f}")
         logger.info(f"   Entry: ${entry_val:.2f}" if entry_val else "   Entry: MARKET")
         logger.info(f"   Stop Loss: ${sl_val:.2f}" if sl_val else "   Stop Loss: NONE")
@@ -359,6 +360,7 @@ def execute_trade(state: TradingState) -> dict:
                         symbol=symbol_val,
                         amount=amount_val,
                         entry_price=entry_val,
+                        order_type=type_val,
                         stop_loss=sl_val,
                         take_profit=tp_val,
                         leverage=lev_val
@@ -369,6 +371,7 @@ def execute_trade(state: TradingState) -> dict:
                         symbol=symbol_val,
                         amount=amount_val,
                         entry_price=entry_val,
+                        order_type=type_val,
                         stop_loss=sl_val,
                         take_profit=tp_val,
                         leverage=lev_val
@@ -470,7 +473,8 @@ def execute_trade(state: TradingState) -> dict:
                         "take_profit": tp_val
                     })
                     # Update balance
-                    new_available = am.mock_available - (amount_val * entry_val / lev_val)
+                    entry_val_safe = entry_val if entry_val is not None else 0.0
+                    new_available = am.mock_available - (amount_val * entry_val_safe / lev_val)
                     am.update_balance(am.mock_balance, new_available)
             except Exception as mock_err:
                 logger.warning(f"⚠️  Failed to update mock account state: {mock_err}")
