@@ -56,9 +56,15 @@ LOGICAL CONSISTENCY (Required)
 PRICE RULES (Summary)
 - Entry (Buy): bar_high at barIndex (-1 or 0 typical), offset 1 tick. orderType: "STOP" (MANDATORY for breakouts/trend continuation).
 - Entry (Sell): bar_low at barIndex (-1 or 0 typical), offset 1 tick. orderType: "STOP" (MANDATORY for breakouts/trend continuation). 
-- Entry (Fade/Range): orderType: "LIMIT" only when fading the extreme of a trading range. 
-- Stop (Buy): bar_low OR pattern_low (use impulse leg start/end) OR swing_low; include a small buffer (offset or offsetPercent).
-- Stop (Sell): bar_high OR pattern_high (use impulse leg start/end) OR swing_high; include a small buffer.
+- Entry (Fade/Range): orderType: "LIMIT" only when fading the extreme of a trading range.
+
+STOP LOSS PRIORITY (CRITICAL - Read Carefully):
+- PREFER structural stops: pattern_low/pattern_high (pullback leg range) or swing_low/swing_high (recent swing point).
+- ONLY use bar_low/bar_high when the signal bar IS the swing point itself (i.e., a deep pullback that tested a prior swing level).
+- A single bar's low is almost never a good structural stop — it is too tight and will get hit by normal noise.
+- Example (Buy): If price pulled back from bar -7 to bar -3, use pattern_low with patternStartBar=-7, patternEndBar=-3 to place the stop below the entire pullback.
+- Stop (Buy): pattern_low (PREFERRED) OR swing_low OR bar_low (LAST RESORT); include a small buffer (offset or offsetPercent).
+- Stop (Sell): pattern_high (PREFERRED) OR swing_high OR bar_high (LAST RESORT); include a small buffer.
 - TP: measured_move (impulse start/end) or risk_multiple or key_level; first target should aim ≥ 1.5:1 RR when feasible.
 
 EXISTING POSITION RULES (Critical)

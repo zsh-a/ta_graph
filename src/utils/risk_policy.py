@@ -8,16 +8,16 @@ import os
 class RiskPolicy:
     """Centralized distance constraints for initial SL/TP."""
 
-    min_stop_atr_multiplier: float = 1.0
-    min_stop_pct: float = 0.003
+    min_stop_atr_multiplier: float = 1.5
+    min_stop_pct: float = 0.005
     min_rr: float = 2.0
     atr_period: int = 14
 
     @classmethod
     def from_env(cls) -> "RiskPolicy":
         return cls(
-            min_stop_atr_multiplier=float(os.getenv("MIN_STOP_ATR_MULTIPLIER", "1.0")),
-            min_stop_pct=float(os.getenv("MIN_STOP_PCT", "0.003")),
+            min_stop_atr_multiplier=float(os.getenv("MIN_STOP_ATR_MULTIPLIER", "1.5")),
+            min_stop_pct=float(os.getenv("MIN_STOP_PCT", "0.005")),
             min_rr=float(os.getenv("MIN_RR", "2.0")),
             atr_period=int(os.getenv("ATR_PERIOD", "14")),
         )

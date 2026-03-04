@@ -152,6 +152,7 @@ def assess_risk(state: TradingState) -> dict[str, Any]:
 
             # Centralized policy constraints: avoid tiny SL/TP distances.
             atr = calculate_atr_from_ohlcv(ohlcv, period=config.policy.atr_period)
+            original_sl_distance = abs(entry_price - stop_loss)
             stop_loss, sl_adjusted, sl_reason = enforce_min_stop_distance(
                 entry_price=entry_price,
                 stop_loss=stop_loss,
@@ -160,7 +161,10 @@ def assess_risk(state: TradingState) -> dict[str, Any]:
                 policy=config.policy,
             )
             if sl_adjusted:
-                logger.info(f"📏 {symbol} {sl_reason}")
+                new_sl_distance = abs(entry_price - stop_loss)
+                orig_pct = (original_sl_distance / entry_price) * 100
+                new_pct = (new_sl_distance / entry_price) * 100
+                logger.info(f"📏 {symbol} {sl_reason} ({orig_pct:.2f}% → {new_pct:.2f}% of entry)")
 
             take_profit, tp_adjusted, tp_reason = enforce_min_rr(
                 entry_price=entry_price,
@@ -240,6 +244,7 @@ def assess_risk(state: TradingState) -> dict[str, Any]:
                 "trading_symbol": trading_symbol,
                 "operation": op,
                 "side": "LONG" if is_buy else "SHORT",
+                "order_type": rules.get("orderType", "limit").lower(),
                 "amount": amount,
                 "entry_price": entry_price,
                 "stop_loss": stop_loss,

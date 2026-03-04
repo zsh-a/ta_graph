@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { createChart, ColorType, CandlestickSeries, HistogramSeries, LineSeries } from 'lightweight-charts';
+import { createChart, ColorType, CandlestickSeries, HistogramSeries, LineSeries, createSeriesMarkers } from 'lightweight-charts';
 import type { IChartApi, ISeriesApi } from 'lightweight-charts';
 import { useStore } from '../store';
 import { formatTradingPair } from '../lib/market';
@@ -54,7 +54,7 @@ export const PriceChart = () => {
                 horzLines: { color: '#1f2937' },
             },
             width: chartContainerRef.current.clientWidth,
-            height: 460,
+            height: chartContainerRef.current.clientHeight || 460,
             timeScale: {
                 borderColor: '#273244',
                 timeVisible: true,
@@ -123,22 +123,105 @@ export const PriceChart = () => {
         };
         chart.subscribeCrosshairMove(onCrosshairMove);
 
-        const handleResize = () => {
-            chart.applyOptions({ width: chartContainerRef.current?.clientWidth });
-        };
+        let animationFrameId: number;
 
-        window.addEventListener('resize', handleResize);
+        const resizeObserver = new ResizeObserver((entries) => {
+            if (entries.length === 0 || !entries[0].contentRect) return;
+            const newRect = entries[0].contentRect;
+
+            // Debounce resize via requestAnimationFrame
+            if (animationFrameId) cancelAnimationFrame(animationFrameId);
+            animationFrameId = requestAnimationFrame(() => {
+                // Check if dimensions actually changed to avoid infinite loops
+                if (chartContainerRef.current) {
+                    chart.applyOptions({
+                        width: newRect.width,
+                        height: newRect.height
+                    });
+                }
+            });
+        });
+
+        if (chartContainerRef.current) {
+            resizeObserver.observe(chartContainerRef.current);
+        }
 
         return () => {
-            window.removeEventListener('resize', handleResize);
+            if (animationFrameId) cancelAnimationFrame(animationFrameId);
+            if (chartContainerRef.current) {
+                resizeObserver.unobserve(chartContainerRef.current);
+            }
+            resizeObserver.disconnect();
             chart.unsubscribeCrosshairMove(onCrosshairMove);
             chart.remove();
         };
     }, []);
 
+    const logs = useStore((state) => state.logs);
+
     useEffect(() => {
         if (candleSeriesRef.current && displayCandles.length > 0) {
             candleSeriesRef.current.setData(displayCandles as any);
+
+            // Generate Marks from Execution Logs
+            const executionMarkers = logs
+                .filter(log => log.type === 'execution' && log.node === 'execution')
+                .map(log => {
+                    const trade = log.data as any;
+                    // Validate we have a price and it's either FILLED or CLOSED
+                    if (!trade || !trade.price || (trade.status !== 'FILLED' && trade.status !== 'CLOSED')) return null;
+
+                    // Match log timestamp to candle time. 
+                    // Note: LightweightCharts 'time' is usually seconds for dates or business days.
+                    // The backend event provides an ISO string timestamp.
+                    const eventTime = new Date(log.timestamp).getTime() / 1000;
+
+                    // Find the closest candle or just use the exact time
+                    let logTime = Math.round(eventTime);
+
+                    const isBuy = trade.side.toLowerCase() === 'buy' || trade.side.toLowerCase() === 'long';
+                    return {
+                        time: logTime,
+                        position: isBuy ? 'belowBar' : 'aboveBar',
+                        color: isBuy ? '#10b981' : '#ef4444',
+                        shape: isBuy ? 'arrowUp' : 'arrowDown',
+                        text: `${trade.side.toUpperCase()} @ ${trade.price}`,
+                    };
+                })
+                .filter(Boolean); // Remove nulls
+
+            if (executionMarkers.length > 0) {
+                // Must sort markers by time ascending as required by lightweight-charts
+                executionMarkers.sort((a: any, b: any) => a.time - b.time);
+                // Type safety constraint: Lightweight Charts requires unique time indices
+                // deduplicate identical timestamp markers by slightly shifting them if needed, or taking the latest
+                const uniqueMarkers = [];
+                const timeMap = new Set();
+                for (const m of executionMarkers) {
+                    if (!timeMap.has(m!.time)) {
+                        timeMap.add(m!.time);
+                        uniqueMarkers.push(m);
+                    }
+                }
+
+                try {
+                    if (!(candleSeriesRef.current as any)._markersPlugin) {
+                        (candleSeriesRef.current as any)._markersPlugin = createSeriesMarkers(
+                            candleSeriesRef.current as any,
+                            uniqueMarkers as any[]
+                        );
+                    } else {
+                        (candleSeriesRef.current as any)._markersPlugin.setMarkers(uniqueMarkers as any[]);
+                    }
+                } catch (e) {
+                    console.error("Failed to set markers:", e);
+                }
+            } else {
+                if ((candleSeriesRef.current as any)._markersPlugin) {
+                    (candleSeriesRef.current as any)._markersPlugin.setMarkers([]);
+                }
+            }
+
             if (volumeSeriesRef.current) {
                 volumeSeriesRef.current.setData(volumeData as any);
             }
@@ -158,7 +241,7 @@ export const PriceChart = () => {
             const from = Math.max(0, to - lookback);
             chart.timeScale().setVisibleLogicalRange({ from, to });
         }
-    }, [displayCandles, volumeData, ema20Data, range]);
+    }, [displayCandles, volumeData, ema20Data, range, logs]);
 
     useEffect(() => {
         if (!candleSeriesRef.current) return;
@@ -214,7 +297,7 @@ export const PriceChart = () => {
     }, [position]);
 
     return (
-        <div className="flex-1 glass-card p-4 flex flex-col min-h-[460px] border-primary/10">
+        <div className="flex-1 glass-card p-4 flex flex-col min-h-0 border-primary/10">
             <div className="flex justify-between items-center mb-4">
                 <h3 className="text-sm font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
                     <div className="w-2 h-4 bg-primary rounded-sm" />
@@ -236,9 +319,8 @@ export const PriceChart = () => {
                             <button
                                 key={item.key}
                                 onClick={() => setRange(item.key as '120' | '360' | '720' | '1200' | '2000' | 'all')}
-                                className={`px-2 py-1 text-[10px] rounded-full transition-colors ${
-                                    range === item.key ? 'bg-primary/20 text-primary' : 'text-muted-foreground hover:text-foreground'
-                                }`}
+                                className={`px-2 py-1 text-[10px] rounded-full transition-colors ${range === item.key ? 'bg-primary/20 text-primary' : 'text-muted-foreground hover:text-foreground'
+                                    }`}
                             >
                                 {item.label}
                             </button>

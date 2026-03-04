@@ -21,7 +21,7 @@ def test_calculate_atr_from_ohlcv_positive():
 
 
 def test_enforce_min_stop_distance_adjusts_tight_long_stop():
-    policy = RiskPolicy(min_stop_atr_multiplier=1.0, min_stop_pct=0.001, min_rr=2.0, atr_period=14)
+    policy = RiskPolicy(min_stop_atr_multiplier=1.5, min_stop_pct=0.001, min_rr=2.0, atr_period=14)
     new_stop, adjusted, reason = enforce_min_stop_distance(
         entry_price=100.0,
         stop_loss=99.9,
@@ -31,7 +31,7 @@ def test_enforce_min_stop_distance_adjusts_tight_long_stop():
     )
 
     assert adjusted is True
-    assert new_stop == 98.0
+    assert new_stop == 97.0
     assert "SL distance adjusted" in reason
 
 
