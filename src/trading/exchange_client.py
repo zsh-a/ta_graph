@@ -270,6 +270,7 @@ class CCXTExchangeClient(ExchangeClient):
         try:
             # Normalize symbol format for exchange
             symbol = normalize_symbol(symbol, self.exchange_id)
+            normalized_order_type = (order_type or "limit").lower()
             # Set leverage if provided
             if leverage:
                 try:
@@ -283,6 +284,18 @@ class CCXTExchangeClient(ExchangeClient):
                 ccxt_params['reduceOnly'] = True
             if client_order_id:
                 ccxt_params['clientOrderId'] = client_order_id
+
+            # Bitget/CCXT expects trigger orders as limit/market + triggerPrice,
+            # not type="stop".
+            if self.exchange_id == "bitget" and normalized_order_type in {"stop", "stop_limit", "stop_market"}:
+                if price is None:
+                    raise ValueError("Bitget STOP order requires trigger price (entry price).")
+                ccxt_params['triggerPrice'] = price
+                if normalized_order_type == "stop_market":
+                    normalized_order_type = "market"
+                    price = None
+                else:
+                    normalized_order_type = "limit"
             
             # Add SL/TP to params
             if stop_loss_price:
@@ -293,7 +306,7 @@ class CCXTExchangeClient(ExchangeClient):
             # Place order
             order = self.exchange.create_order(
                 symbol=symbol,
-                type=order_type,
+                type=normalized_order_type,
                 side=side,
                 amount=amount,
                 price=price,
